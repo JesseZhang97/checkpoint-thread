@@ -13,14 +13,29 @@ then ships only the history owned by that thread.
 - Goal or accepted milestone is the checkpoint cadence.
 - Branch is the delivery lane.
 - Turn is only conversation context, never a checkpoint unit.
-- Begin is lazy and idempotent before the first persistent repo mutation.
+- Enter is lazy and idempotent before the first persistent repo mutation.
 - Goal transitions are semantic judgments by the model, not keyword parsing.
+- The synchronous Hook enforces repository entry; it is not a daemon or a human
+  file watcher.
 
 An accepted goal becomes a local branch commit. Implicit progression into a
 distinct low-risk goal creates a provisional private ref. Ambiguous progression
 stays within one concern until evidence supports a boundary.
 
-## Git and ledger invariants
+## Control-plane invariants
+
+- The selected ledger root contains one SQLite V2 control plane. It is the
+  canonical state and audit store; per-thread `ledger.json` files are replaceable
+  compatibility projections.
+- Every mutation receipt identifies the effective configuration, ledger root,
+  control-plane path, projection path, and event or operation id.
+- V1 JSON ledgers migrate lazily and atomically on first read.
+- Operation ids make completed calls replayable and incomplete calls diagnosable.
+- A `(repo common dir, branch)` claim has at most one task owner. `park` and
+  successful ship release it; PostToolUse releases only clean no-op ownership.
+- Non-config commands cannot override the configured ledger root.
+
+## Git and recovery invariants
 
 - On first mutation after installation, the user chooses the ledger root once.
   The recommended default is
@@ -36,6 +51,26 @@ stays within one concern until evidence supports a boundary.
 - An unborn branch can park and restore dirty state; its first accepted promotion
   creates an exact-path root commit without claiming pre-existing files.
 - Remote-reachable history is never rewritten and pushes are never forced.
+
+## Enforcement invariants
+
+- `PreToolUse` is silent for read-only tools and records `guard -> enter` before
+  recognized Codex file or Git mutations.
+- Missing configuration, another task's active branch claim, Git operations in
+  progress, and direct Git history/delivery commands fail closed.
+- `PostToolUse` never releases a claim while the branch is dirty, has unresolved
+  checkpoints, or contains unpublished task-owned commits.
+- Hook enforcement covers Codex tool calls. Human edits and processes outside
+  Codex remain an explicit boundary.
+
+## Verification invariants
+
+- Verification binds to a Git `state_oid` for exact eligible worktree content,
+  including untracked files, rather than merely the current HEAD.
+- Promotion transfers verification to the new commit only when the verified
+  state is complete and all changed paths are promoted together.
+- Partial promotion, exclusions, later edits, failed checks, or stale evidence
+  require a new verification before ship.
 
 ## Delivery invariants
 
@@ -54,7 +89,9 @@ stays within one concern until evidence supports a boundary.
 
 ## Stable test seam
 
-The bundled CLI exposes JSON for `status`, `snapshot`, `promote`, `ship-plan`,
-and related lifecycle commands. Disposable-repo tests assert observable Git
-refs, branch tips, index/worktree state, remote state, and ledger decisions. The
-model retains responsibility for semantic goal classification.
+The bundled CLI exposes JSON for `enter`, `guard`, `settle`, `inspect`,
+`snapshot`, `promote`, `ship-plan`, and related lifecycle commands. Disposable
+repo tests assert SQLite state, events, operation replay, claims, Hook decisions,
+Git refs, exact state ids, branch tips, index/worktree state, remote state, and
+ledger decisions. The model retains responsibility for semantic goal
+classification.

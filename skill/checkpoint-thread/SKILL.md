@@ -1,13 +1,13 @@
 ---
 name: checkpoint-thread
-description: Checkpoint repository work across a Codex thread. Use before its first persistent change, when work enters another branch or worktree, when a goal boundary needs recovery, or when thread-owned changes must be committed or shipped.
+description: Automatically checkpoint Codex repo work before its first mutation and across branches. Use on every repo-mutating task; the hook enforces entry without explicit invocation, while the CLI ships only verified, thread-owned work.
 ---
 
 # Checkpoint Thread
 
 A thread is the scope, a goal boundary is the checkpoint cadence, and a branch is
-the delivery lane. Use the CLI for Git and ledger mutations; keep semantic goal
-judgment in the Parent Agent.
+the delivery lane. The Parent Agent judges goals; the CLI owns deterministic Git,
+recovery, verification, and delivery mutations.
 
 ## Dispatch
 
@@ -20,35 +20,36 @@ choose the ledger root. Recommend
 `--ledger-root "$LEDGER_ROOT" configure`. Reuse it thereafter. Replace it only
 with explicit confirmation via `configure --replace`.
 
-Read-only threads create nothing. Active same-goal continuation makes no CLI call.
-
-Before the first persistent repository change, run:
+The synchronous `PreToolUse` hook silently runs `guard`, recording the
+preflight and immutable baseline before Codex writes. `PostToolUse` releases a
+clean no-op claim. It is not a daemon and does not observe human file saves. If
+the hook is unavailable, run this before the first persistent change:
 
 ```bash
-python3 scripts/checkpoint_thread.py --ledger-id "$LEDGER_ID" status --repo "$ROOT"
-python3 scripts/checkpoint_thread.py --ledger-id "$LEDGER_ID" begin --repo "$ROOT" --merge-target "$TARGET"
+python3 scripts/checkpoint_thread.py --ledger-id "$LEDGER_ID" enter --repo "$ROOT" --merge-target "$TARGET"
 ```
 
-Dispatch from observable state:
+Read-only threads create nothing. Active same-goal continuation makes no CLI call
+from the agent; only the silent hook runs.
 
 | Event | Action |
 |---|---|
-| No ledger before first repository mutation | `begin` |
+| First Codex mutation | Hook `guard`; fallback `enter` |
 | Active goal continues | Continue; no Git action |
-| New branch or worktree enters scope | `begin` there |
-| Goal is explicitly or objectively accepted | `promote` exact paths |
+| New branch or worktree enters scope | `enter` there before mutation |
+| Goal is explicitly or objectively accepted | Verify, then `promote` exact paths |
 | A distinct low-risk goal begins implicitly | `snapshot --kind provisional` |
 | Work pauses | `snapshot --kind safety` |
 | A dirty branch must be left | `park` |
 | User explicitly requests ship/push | Read `references/ship.md` |
 
-Repeated `begin` is idempotent. On `continue`, do not reload references, rescan
-branches, or create another checkpoint.
+Repeated `enter` is idempotent. On `continue`, do not reload references or create
+another checkpoint. One thread may claim a repo branch at a
+time; `park`, successful ship, or a clean no-op post-hook releases the claim.
 
 ## Goal Boundary
 
-Compare the new request with the ledger's active goal by object, intent, and
-concern. Use semantic goal delta, never transition-word matching:
+Compare the request with the active goal by object, intent, and concern. Use semantic goal delta; never match transition words:
 
 - Treat refinement of the same outcome as `continuation`.
 - Treat an independent outcome as `new_goal`.
@@ -56,11 +57,10 @@ concern. Use semantic goal delta, never transition-word matching:
 
 Apply the checkpoint gate before promotion:
 
-1. Account for every selected staged, unstaged, and untracked path.
+1. Account for every selected changed path.
 2. Establish acceptance by approval, objective evidence, or implicit progression
    into a distinct low-risk goal.
-3. Reuse current verification evidence or run the narrowest repository-defined
-   check needed for this goal.
+3. Reuse exact-state evidence or run the narrowest check needed for this goal.
 4. Leave no known broken intermediate state.
 
 Implicit progression creates a provisional private ref, not remote history.
@@ -68,27 +68,31 @@ Schema, auth, migration, concurrency, and external-contract work always requires
 objective evidence.
 
 After observing a check, use `record-verification` to bind its command, status,
-scope, evidence, and current HEAD to the branch ledger. Never record an unrun check.
+scope, evidence, exclusions, and exact recoverable `state_oid`. Promotion carries
+it only when that state matches all promoted changes; otherwise rerun the narrow
+check. Never record an unrun check.
 
 ## Branch Path
 
 Before switching branches, promote confirmed work or `park` provisional work.
-Enroll the destination before mutation. Keep checkpoints, verification, upstream,
-and merge target bound to their branch.
+Enroll the destination before mutation. Keep checkpoints, claims, verification,
+upstream, and merge target bound to their branch.
 
-Read `references/safety-snapshot.md` for partial staging, untracked files, large
-files, secrets, branch parking, or recovery. Read `references/worktree.md` only
+Read `references/safety-snapshot.md` for staging, untracked or large files,
+secrets, parking, or recovery. Read `references/worktree.md` only
 when multiple worktrees exist. Read `references/multi-repo.md` only when this
 thread touches more than one repository.
 
 ## Authority
 
-Treat `begin` as authority to create private local refs and `promote` as authority
+Treat `enter` as authority to create private local refs and `promote` as authority
 to create confirmed local commits. Require an explicit ship/push request before
-fetch, history rewrite, rebase, or push. Never push private refs or force-push.
+fetch, history rewrite, rebase, or push. Use lifecycle commands rather than direct
+Git history/delivery commands. Never push private refs or force-push.
 
 ## Receipt
 
-Report only observed results: ledger id, repo, branch, checkpoint or commit SHA,
-verification, exclusions, push status, and merge plan. A blocked branch remains
-blocked; do not count a snapshot, fetch, rebase, hook, or push failure as success.
+Report only observed results: ledger id and paths, event or operation id, repo,
+branch, checkpoint or commit SHA, verification, exclusions, claim/push status,
+and merge plan. A blocked operation remains blocked; never count a snapshot,
+hook, fetch, rebase, or push failure as success.

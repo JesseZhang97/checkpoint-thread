@@ -1,4 +1,4 @@
 interface:
   display_name: "Checkpoint Thread"
-  short_description: "Checkpoint, organize, and ship thread-scoped Git work"
-  default_prompt: "Use $checkpoint-thread to track this task across goals and branches, preserve recovery points, and ship only thread-owned commits."
+  short_description: "Auto-checkpoint and ship thread-owned Git work"
+  default_prompt: "Use $checkpoint-thread to guard this task's repository mutations, preserve exact recovery points, and ship only verified thread-owned commits."

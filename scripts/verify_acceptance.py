@@ -5,6 +5,7 @@ import argparse
 import ast
 import json
 import math
+import os
 import re
 import statistics
 import subprocess
@@ -20,6 +21,7 @@ DEFAULT_MATRIX = PROJECT_ROOT / "acceptance" / "scenarios.json"
 CHECKPOINT_CLI = (
     PROJECT_ROOT / "skill" / "checkpoint-thread" / "scripts" / "checkpoint_thread.py"
 )
+CHECKPOINT_HOOK = PROJECT_ROOT / "hooks" / "checkpoint_guard.py"
 WEIGHTS = {"P0": 5, "P1": 3, "P2": 1}
 VALID_STATUSES = {"automated", "benchmark", "contract", "gap", "real_remote"}
 
@@ -28,6 +30,8 @@ def run(
     command: Sequence[str | Path],
     *,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
+    input_text: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(item) for item in command],
@@ -35,6 +39,8 @@ def run(
         capture_output=True,
         text=True,
         check=False,
+        env=env,
+        input=input_text,
     )
 
 
@@ -49,6 +55,8 @@ def benchmark_hot_path() -> dict[str, Any]:
         root = Path(directory)
         repo = root / "repo"
         ledgers = root / "ledgers"
+        codex_home = root / "codex-home"
+        environment = {"CODEX_HOME": str(codex_home)}
         repo.mkdir()
         commands = [
             ["git", "init", "-q", "-b", "main"],
@@ -64,6 +72,21 @@ def benchmark_hot_path() -> dict[str, Any]:
             result = run(command, cwd=repo)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr)
+        configured = subprocess.run(
+            [
+                sys.executable,
+                str(CHECKPOINT_CLI),
+                "--ledger-root",
+                str(ledgers),
+                "configure",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, **environment},
+        )
+        if configured.returncode != 0:
+            raise RuntimeError(configured.stderr or configured.stdout)
 
         status_samples: list[float] = []
         for index in range(20):
@@ -72,14 +95,13 @@ def benchmark_hot_path() -> dict[str, Any]:
                 [
                     sys.executable,
                     CHECKPOINT_CLI,
-                    "--ledger-root",
-                    ledgers,
                     "--ledger-id",
                     f"status-{index}",
                     "status",
                     "--repo",
                     repo,
-                ]
+                ],
+                env={**os.environ, **environment},
             )
             status_samples.append((time.perf_counter() - started) * 1000)
             if result.returncode != 0:
@@ -92,28 +114,83 @@ def benchmark_hot_path() -> dict[str, Any]:
                 [
                     sys.executable,
                     CHECKPOINT_CLI,
-                    "--ledger-root",
-                    ledgers,
                     "--ledger-id",
-                    f"begin-{index}",
+                    "hot-path-thread",
                     "begin",
                     "--repo",
                     repo,
                     "--merge-target",
                     "main",
-                ]
+                ],
+                env={**os.environ, **environment},
             )
             begin_samples.append((time.perf_counter() - started) * 1000)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr or result.stdout)
+
+        guard_samples: list[float] = []
+        for index in range(20):
+            started = time.perf_counter()
+            result = run(
+                [
+                    sys.executable,
+                    CHECKPOINT_CLI,
+                    "--ledger-id",
+                    "hot-path-thread",
+                    "--operation-id",
+                    f"guard-{index}",
+                    "guard",
+                    "--repo",
+                    repo,
+                ],
+                env={**os.environ, **environment},
+            )
+            guard_samples.append((time.perf_counter() - started) * 1000)
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr or result.stdout)
+
+        hook_samples: list[float] = []
+        hook_environment = {
+            **os.environ,
+            **environment,
+            "PLUGIN_ROOT": str(PROJECT_ROOT),
+        }
+        for index in range(10):
+            payload = {
+                "tool_name": "apply_patch",
+                "tool_input": {
+                    "command": "*** Begin Patch\n*** End Patch",
+                    "workdir": str(repo),
+                },
+                "session_id": "hot-path-thread",
+                "tool_use_id": f"hook-{index}",
+                "cwd": str(repo),
+            }
+            started = time.perf_counter()
+            for hook_event in ("PreToolUse", "PostToolUse"):
+                payload["hook_event_name"] = hook_event
+                result = run(
+                    [sys.executable, CHECKPOINT_HOOK],
+                    env=hook_environment,
+                    input_text=json.dumps(payload),
+                )
+                if result.returncode != 0 or result.stdout:
+                    raise RuntimeError(result.stderr or result.stdout)
+            hook_samples.append((time.perf_counter() - started) * 1000)
 
     return {
         "status_p50_ms": round(statistics.median(status_samples), 2),
         "status_p95_ms": round(percentile(status_samples, 0.95), 2),
         "begin_p50_ms": round(statistics.median(begin_samples), 2),
         "begin_p95_ms": round(percentile(begin_samples, 0.95), 2),
+        "guard_p50_ms": round(statistics.median(guard_samples), 2),
+        "guard_p95_ms": round(percentile(guard_samples, 0.95), 2),
+        "hook_roundtrip_p50_ms": round(statistics.median(hook_samples), 2),
+        "hook_roundtrip_p95_ms": round(percentile(hook_samples, 0.95), 2),
         "status_samples": len(status_samples),
         "begin_samples": len(begin_samples),
+        "guard_samples": len(guard_samples),
+        "hook_roundtrip_samples": len(hook_samples),
     }
 
 
@@ -220,9 +297,16 @@ def main() -> int:
             evidence_valid = evidence.startswith("github:") and key in remote_scenarios
             covered = evidence_valid
         elif status == "benchmark":
-            evidence_valid = evidence in {"begin_p95_ms", "status_p95_ms"}
-            threshold = 750 if evidence == "begin_p95_ms" else 250
-            covered = evidence_valid and benchmark[evidence] <= threshold
+            thresholds = {"begin_p95_ms": 750, "status_p95_ms": 250}
+            if evidence == "guard_hook_p95_ms":
+                evidence_valid = True
+                covered = (
+                    benchmark["guard_p95_ms"] <= 500
+                    and benchmark["hook_roundtrip_p95_ms"] <= 1000
+                )
+            else:
+                evidence_valid = evidence in thresholds
+                covered = evidence_valid and benchmark[evidence] <= thresholds[evidence]
         else:
             evidence_valid = bool(scenario.get("rationale"))
             covered = False
@@ -281,6 +365,8 @@ def main() -> int:
         "conditional_references": lean["conditional_references"] <= 4,
         "status_p95": benchmark["status_p95_ms"] <= 250,
         "begin_p95": benchmark["begin_p95_ms"] <= 750,
+        "guard_p95": benchmark["guard_p95_ms"] <= 500,
+        "hook_roundtrip_p95": benchmark["hook_roundtrip_p95_ms"] <= 1000,
     }
     report = {
         "accepted": all(gates.values()),

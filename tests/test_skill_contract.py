@@ -12,7 +12,7 @@ class SkillContractTests(unittest.TestCase):
     def test_skill_stays_lean_and_points_to_conditional_references(self) -> None:
         content = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertLessEqual(len(content.splitlines()), 100)
-        self.assertLessEqual(len(content.split()), 700)
+        self.assertLessEqual(len(content.split()), 650)
         frontmatter = re.match(r"---\n(.*?)\n---", content, re.DOTALL)
         self.assertIsNotNone(frontmatter)
         description = next(
@@ -31,6 +31,11 @@ class SkillContractTests(unittest.TestCase):
             "${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active", content
         )
         self.assertIn("configure --replace", content)
+        self.assertIn("PreToolUse", content)
+        self.assertIn("not a daemon", content)
+        self.assertIn("fallback `enter`", content)
+        self.assertIn("state_oid", content)
+        self.assertIn("direct\nGit history/delivery commands", content)
         for reference in [
             "ship.md",
             "safety-snapshot.md",

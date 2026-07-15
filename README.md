@@ -5,30 +5,46 @@
 `checkpoint-thread` 用来管理一个 Codex task 中跨文件、跨目标、跨 branch，
 以及偶尔跨 worktree 或多个 repo 的 Git 工作。
 
-本仓库是该 skill 的主仓库；`skill/checkpoint-thread` 是可安装的 skill 本体，
-其余目录提供规格、测试、验收目录和真实远端协作证据。
+本仓库同时是 Codex plugin marketplace 和 skills.sh skill。plugin 包含同步 Hook，
+`skill/checkpoint-thread` 则是可独立安装的轻量 skill；其余目录提供规格、测试、
+验收目录和真实远端协作证据。
 
 它解决的核心问题是：Codex task 没有内建回退点，但又不应该每个 turn 都
 提交一次。这个 skill 以 task 为所有权范围、以目标边界为 checkpoint、以
 branch 为交付通道，只推送当前 task 真正拥有的提交。
 
-## 启用
+## 推荐启用方式
 
-使用 skills CLI 全局安装到 Codex：
+完整 V2 使用 Codex plugin 安装。它会同时启用 skill、`PreToolUse` guard 和
+`PostToolUse` settle：
+
+```bash
+codex plugin marketplace add JesseZhang97/checkpoint-thread --ref main
+codex plugin add checkpoint-thread@checkpoint-thread
+```
+
+升级时运行：
+
+```bash
+codex plugin marketplace upgrade checkpoint-thread
+```
+
+只需要指令层、接受没有 Hook 硬约束时，仍可通过 skills.sh 安装：
 
 ```bash
 npx skills add JesseZhang97/checkpoint-thread \
   --skill checkpoint-thread --agent codex --global --yes
 ```
 
-然后新建一个 Codex task，让 skill 列表重新加载。更新已安装版本时运行：
+skills.sh 版本的更新命令是：
 
 ```bash
 npx skills update checkpoint-thread --global --yes
 ```
 
-仓库贡献者也可以从仓库根目录执行 `npx skills add . --list`，验证 CLI 能发现
-`skill/checkpoint-thread`。
+安装或更新后新建 Codex task，让 skill 和 Hook 配置重新加载。仓库贡献者可从
+根目录执行 `npx skills add . --list`，或在隔离的 `CODEX_HOME` 中把当前目录添加
+为本地 plugin marketplace，验证两种发布面。
 
 第一次需要修改仓库时，skill 会让你确认 ledger 保存位置。推荐值是：
 
@@ -40,14 +56,18 @@ ${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active
 
 ## 日常怎么用
 
-安装并启用 skill 后，正常描述开发任务即可，不需要每次手动执行 `begin`：
+安装并启用后，正常描述开发任务即可，不需要每次手动执行 `enter`：
 
 ```text
 把订单详情页的操作栏调窄一点。
 ```
 
-在第一次修改仓库之前，skill 会懒执行 `begin`。只读分析不会创建 ledger 或
-Git ref；继续调整同一个目标时也不会执行 checkpoint 命令。
+在第一次修改仓库之前，Hook 会同步执行 `guard`，内部完成 `enter`、预检和基线
+ref；没有 Hook 时 skill 会直接执行一次 `enter`。只读分析不会创建 ledger 或
+Git ref；继续调整同一个目标时也不需要 checkpoint 命令。
+
+Hook 不是后台进程或文件监听器，只在 Codex tool 调用前后执行。人工保存文件不会
+触发它；此时可手动运行 `enter` 或在下一次 Codex 修改前由 guard 接管。
 
 刚执行 `git init`、尚无初始 commit 的仓库也受支持：checkpoint 可以正常
 park/restore，第一次验收后的 `promote` 会创建只包含 task-owned 路径的 root
@@ -66,7 +86,7 @@ $checkpoint-thread 修复订单详情页操作栏高度问题。
 | 你的行为 | Skill 的行为 |
 |---|---|
 | 让 Codex 分析代码，没有修改 | 不创建任何状态 |
-| 开始修改当前 repo | 懒执行一次 `begin` |
+| 开始修改当前 repo | Hook 自动 `guard`，必要时 `enter` |
 | 继续微调同一个目标 | 不创建新 checkpoint |
 | 直接开始一个不同的低风险目标 | 为前一个目标创建 provisional 私有 ref |
 | 明确认可结果，或客观验收通过 | 将精确相关路径提交为本地原子 commit |
@@ -86,6 +106,17 @@ $checkpoint-thread 修复订单详情页操作栏高度问题。
 第二句仍属于同一个目标，不会产生 checkpoint。第三句即使没有“接下来”这类
 转折词，也会根据对象和意图变化被识别为新目标。最后一句才授权 fetch、rebase
 和 push。
+
+## 控制面
+
+V2 使用用户所选 ledger root 下的 `checkpoint-thread.sqlite3` 作为事实源，同时维护
+`<ledger-id>/ledger.json` 兼容投影；恢复内容仍存放在仓库的私有 Git refs。每个回执
+都包含实际 `ledger_root`、数据库路径、投影路径和事件/操作标识，`inspect --check`
+可诊断投影漂移、孤立 ref、分支占用和未完成操作。V1 JSON ledger 会在首次读取时
+原地迁移。
+
+同一 repo branch 同时只允许一个 task 占用。`park`、成功 ship，以及没有留下脏
+状态或未发布提交的 no-op tool 会释放占用。
 
 ## 推送时会检查什么
 
@@ -132,7 +163,8 @@ python3 skill/checkpoint-thread/scripts/checkpoint_thread.py \
 
 选择结果保存在
 `${CODEX_HOME:-$HOME/.codex}/checkpoint-thread/config.json`。修改已有选择需要用户确认，
-并显式追加 `configure --replace`；单次命令仍可使用 `--ledger-root` 覆盖。
+并显式追加 `configure --replace`。非配置命令不能临时切换 root，避免出现多套
+相互矛盾的 ledger。
 
 设计、架构精简度与验收细节见 `SPEC.md`、
 `ARCHITECTURE_ASSESSMENT.md`、`ACCEPTANCE_CRITERIA.md` 和 `FINAL_REPORT.md`。

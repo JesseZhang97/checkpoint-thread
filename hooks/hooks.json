@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|exec_command|unified_exec|shell|apply_patch|Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT}/hooks/checkpoint_guard.py\"",
+            "timeout": 30,
+            "statusMessage": "Checkpoint Thread is verifying repository ownership"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|exec_command|unified_exec|shell|apply_patch|Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 \"${PLUGIN_ROOT}/hooks/checkpoint_guard.py\"",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -2,8 +2,9 @@
 
 ## Outcome
 
-The workflow passes the quantified acceptance model. All 80 cataloged scenarios
-are covered, including the unborn-branch lifecycle and an atomic multi-ref race.
+V2 passes the expanded quantified acceptance model. All original 80 scenarios
+remain covered, and all 20 new control-plane, verification, concurrency, and
+Hook scenarios pass.
 
 | Gate | Required | Observed | Result |
 |---|---:|---:|---|
@@ -13,12 +14,14 @@ are covered, including the unborn-branch lifecycle and an atomic multi-ref race.
 | Lowest domain coverage | >= 80% | 100% | Pass |
 | Negative executable cases | >= 35% | 56% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 52/52 | Pass |
-| `SKILL.md` lines | <= 100 | 94 | Pass |
-| `SKILL.md` words | <= 700 | 573 | Pass |
+| Local test suite | All pass | 72/72 | Pass |
+| `SKILL.md` lines | <= 100 | 98 | Pass |
+| `SKILL.md` words | <= 650 | 649 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 177.34 ms | Pass |
-| `begin` p95 | <= 750 ms | 420.66 ms | Pass |
+| `status` p95 | <= 250 ms | 176.34 ms | Pass |
+| `begin` p95 | <= 750 ms | 403.68 ms | Pass |
+| `guard` p95 | <= 500 ms | 222.61 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 565.80 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -31,7 +34,7 @@ The lean-architecture and progressive-disclosure review is in
 - One Codex thread is the ownership scope.
 - A goal boundary, not a turn, is the checkpoint cadence.
 - A branch is a delivery lane; one thread may own work on several lanes.
-- `begin` is lazy and idempotent before the first persistent repository change.
+- The plugin Hook runs `guard`; without it, `enter` is the lazy idempotent entry.
 - The user selects the ledger root once on first mutation; the recommended
   default is under `CODEX_HOME`, and later tasks reuse the saved choice.
 - Read-only threads create no ledger or ref; same-goal continuation invokes no
@@ -39,13 +42,27 @@ The lean-architecture and progressive-disclosure review is in
 - The model decides `continuation`, `new_goal`, or `ambiguous` semantically. The
   deterministic CLI owns Git mutations and ledger state, not language parsing.
 
+## V2 Control Plane
+
+- SQLite schema V2 under the configured ledger root is canonical.
+- Per-task `ledger.json` remains a compatibility projection, not a second truth.
+- V1 JSON ledgers migrate lazily on first read.
+- Every receipt self-locates the configuration, database, projection, event, and
+  operation.
+- Operation ids make completed calls replayable and expose interrupted calls to
+  `inspect --check`.
+- A repo/branch has at most one active task claim. Park, successful ship, and a
+  clean no-op PostToolUse release it; dirty or unpublished work retains it.
+- The Hook is synchronous and silent on allow. It is not a daemon or human file
+  watcher.
+
 ## Supported Workflow
 
 ### Enrollment and ownership
 
 - Enroll an initialized non-bare Git repository before its first mutation.
 - Keep a thread ledger outside business repositories, keyed by Git common dir.
-- Record branch baselines once across repeated `begin` calls.
+- Record branch baselines once across repeated `enter` or compatibility `begin` calls.
 - Reject detached HEAD, non-repository paths, and corrupt ledger state.
 - Do not silently claim dirty pre-thread paths, pre-thread commits, merely visited
   branches, or commits from another thread.
@@ -80,7 +97,10 @@ The lean-architecture and progressive-disclosure review is in
 
 ### Verification
 
-- Bind command, scope, status, evidence, timestamp, and current `HEAD` to a branch.
+- Bind command, scope, status, evidence, timestamp, exclusions, and exact
+  recoverable `state_oid` to a branch.
+- Transfer a passed check to the promoted commit only when that complete state
+  exactly matches every promoted change.
 - Require either current verification or an explicit `not_applicable` record
   before shipping.
 - Let the latest result for the same command and scope supersede older failures
@@ -167,6 +187,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 52-test disposable-repository suite, resolves every catalog
-evidence pointer, measures the hot paths, validates the lean-skill limits, and
-exits nonzero when any acceptance gate fails.
+The verifier runs the 72-test disposable-repository suite, resolves all 100
+catalog evidence pointers, measures the four hot paths, validates the lean-skill
+limits, and exits nonzero when any acceptance gate fails.

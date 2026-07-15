@@ -73,20 +73,34 @@ def run_cli(
     repo: Path | None = None,
     *extra: str,
     expected_code: int = 0,
+    operation_id: str | None = None,
 ) -> dict:
+    codex_home = ledger_root.parent / "codex-home"
+    environment = {"CODEX_HOME": str(codex_home)}
+    config_path = codex_home / "checkpoint-thread" / "config.json"
+    if not config_path.exists():
+        configured = run(
+            [sys.executable, str(CLI), "--ledger-root", str(ledger_root), "configure"],
+            check=False,
+            env=environment,
+        )
+        if configured.returncode != 0:
+            raise AssertionError(
+                f"could not configure test ledger root\n{configured.stdout}\n{configured.stderr}"
+            )
     args = [
         sys.executable,
         str(CLI),
-        "--ledger-root",
-        str(ledger_root),
         "--ledger-id",
         ledger_id,
-        command,
     ]
+    if operation_id is not None:
+        args.extend(["--operation-id", operation_id])
+    args.append(command)
     if repo is not None:
         args.extend(["--repo", str(repo)])
     args.extend(extra)
-    result = run(args, check=False)
+    result = run(args, check=False, env=environment)
     if result.returncode != expected_code:
         raise AssertionError(
             f"CLI returned {result.returncode}, expected {expected_code}\n"

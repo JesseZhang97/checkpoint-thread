@@ -2,45 +2,46 @@
 
 ## Verdict
 
-The skill passes both the lean-architecture and progressive-disclosure review.
-Its model-facing surface is compact, operational details are loaded only when
-needed, and fragile Git mutations are isolated behind one deterministic JSON CLI.
+V2 passes the lean-architecture and progressive-disclosure review. It adds a
+SQLite control plane and synchronous enforcement Hook without putting either in
+model context. The hot skill remains a compact policy router; deterministic code
+owns auditing, branch claims, exact state identity, recovery, and delivery.
 
-The only watch item is implementation maintainability: the CLI is intentionally
-single-file and has reached 1,769 lines. This does not consume model context and
-currently buys simple distribution, but future unrelated feature growth should
-trigger a module split rather than a larger `SKILL.md`.
+This is the intended scale boundary: more runtime rigor, nearly unchanged model
+load. There is still no daemon, file watcher, semantic goal parser, or distributed
+coordinator.
 
 ## Quantified structure
 
 | Layer | Observed | Assessment |
 |---|---:|---|
-| Triggered `SKILL.md` | 94 lines, 573 words | Pass: 94% of line budget, 82% of word budget |
+| Triggered `SKILL.md` | 98 lines, 649 words | Pass: within 100-line and 650-word budgets |
 | Conditional references | 4 | Pass: exactly at the allowed count |
 | Reference depth | One hop from `SKILL.md` | Pass |
 | Reference payload | 122 lines, 783 words total | Pass: each file is 12-49 lines |
-| Deterministic CLI | 1,769 lines, 4,516 words | Pass with watch: bundled, not model-loaded |
-| Skill package artifacts | 1 skill, 4 references, 1 CLI, 1 UI metadata file | Pass |
-| Acceptance suite | 80/80 scenarios, 52 tests | Pass |
+| Lifecycle CLI | 2,305 lines, 5,770 words | Bundled and not model-loaded |
+| SQLite store | 532 lines, 1,490 words | Separate persistence boundary |
+| Pre/Post Hook | 224 lines, 555 words | Silent on allow; no model tokens |
+| Skill package | 1 skill, 4 references, 2 scripts, 1 UI metadata file | Pass |
+| Acceptance suite | 100/100 scenarios, 72 tests | Original 80 plus 20 V2 scenarios |
 
-The line budget is close to its ceiling because the dispatch table occupies one
-line per event. The word budget has meaningful headroom. Future branch, recovery,
-or delivery detail belongs in an existing reference rather than the hot file.
+The hot file is deliberately near its ceiling. New Git mechanics belong in code;
+rare policy belongs in an existing one-hop reference. A new hot-path concept must
+replace or compress an old one rather than simply expanding context.
 
 ## Disclosure layers
 
 ### Layer 1: discovery metadata
 
-The frontmatter description and `agents/openai.yaml` explain when to activate the
-skill without embedding the workflow. They do not expose Git plumbing or test
-details during unrelated tasks.
+The frontmatter says to activate on every repo-mutating task and identifies the
+automatic Hook fallback. Unrelated tasks see metadata only, not Git plumbing.
 
 ### Layer 2: hot workflow
 
-`SKILL.md` contains only the operating model, first-use configuration, dispatch,
-semantic goal boundary, authority boundary, and receipt contract. Read-only work
-creates no state, and same-goal continuation performs no CLI call or reference
-load.
+`SKILL.md` contains entry, dispatch, semantic goal boundary, authority, and
+receipt contracts. Read-only work creates no state. Same-goal continuation adds
+no agent-dispatched checkpoint or reference load; the silent Hook guard still
+enforces each recognized mutation.
 
 ### Layer 3: conditional policy
 
@@ -53,31 +54,37 @@ All references are linked directly from `SKILL.md`; none links to another
 reference. The conditions are observable, mutually understandable, and avoid
 loading ship or topology policy on the common same-branch path.
 
-### Layer 4: deterministic execution
+### Layer 4: synchronous enforcement
 
-The Python CLI owns ledger persistence, Git snapshots, exact-path promotion,
-recovery, ownership checks, rebase, push, and receipts. The model retains only
-semantic goal classification. This is the correct freedom split: language
-judgment remains flexible while destructive operations use a low-freedom tool.
+`PreToolUse` classifies tool calls, blocks direct history/delivery bypass, and
+runs `guard` before recognized mutations. `PostToolUse` settles clean no-op
+claims. Successful Hook calls emit nothing into context.
+
+### Layer 5: deterministic control and payload
+
+The CLI orchestrates lifecycle and Git operations. `checkpoint_store.py` owns
+SQLite schema, events, replay, claims, migration, and projections. Private Git
+refs hold recovery payloads. The model retains only semantic goal classification.
 
 ## Runtime efficiency
 
-- Same-goal continuation: no checkpoint command.
-- Read-only task: no ledger, ref, configuration, or reference load.
-- `status` p95: 177.34 ms against a 250 ms budget.
-- `begin` p95: 420.66 ms against a 750 ms budget.
-- Repeated `begin`: idempotent and returns the existing baseline.
+- Same-goal continuation: no agent-dispatched checkpoint command.
+- Read-only task: no ledger, database, ref, or reference load.
+- `status` p95: 176.34 ms against a 250 ms budget.
+- `begin` p95: 403.68 ms against a 750 ms budget.
+- `guard` p95: 222.61 ms against a 500 ms budget.
+- Pre/Post no-op round trip p95: 565.80 ms against a 1000 ms budget.
+- Repeated `enter` is idempotent; operation ids make retries replayable.
 
 ## Maintenance boundary
 
-Keeping one executable remains reasonable because installation copies one
-self-contained script and the CLI presents stable JSON commands. Split it only
-when at least one of these becomes true:
+The V2 split stops at a deep persistence module instead of creating many shallow
+packages. Keep Git lifecycle orchestration together while its commands share the
+same invariants; split snapshot or delivery only if it gains an independent API
+or platform implementation.
 
-1. Snapshot, promotion, or delivery logic needs independent reuse.
-2. Changes repeatedly cross unrelated sections of the file.
-3. Platform-specific Git behavior requires separate implementations.
-4. Unit isolation becomes materially harder than disposable-repository testing.
-
-Until then, a module split would add packaging and navigation cost without
-reducing model context or observable risk.
+The remaining boundary is explicit: Hook enforcement covers Codex tool calls in
+their declared working repo, not human saves or external processes; SQLite
+coordinates one local ledger root, not multiple machines. Those limits avoid
+pretending a lightweight local skill is an operating-system sandbox or
+distributed transaction service.

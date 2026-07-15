@@ -186,14 +186,10 @@ class CollaborationAndShippingTests(unittest.TestCase):
         (self.repo / "preexisting.txt").write_text("before thread\n", encoding="utf-8")
         git(self.repo, "add", "preexisting.txt")
         git(self.repo, "commit", "-qm", "chore: preexisting local commit")
-        separate_ledger = "ownership-thread"
-        run_cli(
-            self.ledgers, separate_ledger, "begin", self.repo, "--merge-target", "main"
-        )
         (self.repo / "owned.txt").write_text("thread owned\n", encoding="utf-8")
         run_cli(
             self.ledgers,
-            separate_ledger,
+            self.ledger_id,
             "promote",
             self.repo,
             "--path",
@@ -204,7 +200,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
             "explicit",
         )
 
-        result = run_cli(self.ledgers, separate_ledger, "ship-plan", None, "--fetch")
+        result = run_cli(self.ledgers, self.ledger_id, "ship-plan", None, "--fetch")
 
         branch = result["branches"][0]
         self.assertEqual("blocked", branch["push_status"])

@@ -2,10 +2,10 @@
 
 ## Meaning of "most scenarios"
 
-Coverage is measured against the checked-in scenario catalog, not against raw
-Python line coverage. The catalog is the product of six workflow phases
-(invocation, goal boundary, recovery, promotion, topology, and delivery) crossed
-with the Git hazards relevant to that phase.
+Coverage is measured against the checked-in 100-scenario catalog, not raw Python
+line coverage. The original 80 scenarios remain intact. Twenty V2 scenarios add
+the control plane, verification integrity, concurrency, and Hook enforcement
+without weakening the previous gates.
 
 Scenario weights are:
 
@@ -30,24 +30,29 @@ contract clause is not coverage.
 
 ## Lean-skill gate
 
-The model-loaded `SKILL.md` must remain at or below 100 lines and 700 words, with
+The model-loaded `SKILL.md` must remain at or below 100 lines and 650 words, with
 at most four conditionally loaded references. A read-only thread creates no
-state, and a same-goal continuation executes no checkpoint CLI command.
+state, and a same-goal continuation dispatches no semantic checkpoint command;
+the synchronous mutation guard is runtime enforcement, not model context.
 
 On the acceptance machine, the disposable-repo benchmark requires:
 
 - `status` p95 at or below 250 ms;
 - `begin` p95 at or below 750 ms.
+- `guard` p95 at or below 500 ms;
+- complete `PreToolUse + PostToolUse` no-op round trip p95 at or below 1000 ms.
 
 These are regression budgets, not universal hardware guarantees. The observed
 values and machine-independent structural limits are included in the report.
 
 ## Supported scope
 
-The acceptance catalog covers unborn and ordinary non-bare Git worktrees, root
-commits, partial staging, untracked and ignored files, branches, multiple
-worktrees, multiple repositories, local and GitHub remotes, hooks, concurrent
-remote changes, atomic group rejection, rebase, conflict and push rejection paths.
+The catalog covers V1 migration, SQLite audit state, operation replay, projection
+diagnostics, exact verification identity, branch claims and their release,
+unborn and ordinary worktrees, root commits, staging, untracked and ignored
+files, multiple branches/worktrees/repos, local and GitHub remotes, Hook allow
+and deny paths, concurrent remote changes, atomic rejection, rebase, conflict,
+and push rejection.
 
 Git LFS object transport, server administration, authentication recovery,
 platform-specific case-collision behavior, and mutation of submodule contents by

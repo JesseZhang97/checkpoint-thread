@@ -86,6 +86,30 @@
     {"id":"REP-04","domain":"reporting_efficiency","name":"Model-loaded skill stays within line and word budgets","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_skill_contract.py::test_skill_stays_lean_and_points_to_conditional_references"},
     {"id":"REP-05","domain":"reporting_efficiency","name":"Only four conditional references are linked from hot skill","priority":"P1","negative":false,"status":"automated","evidence":"tests/test_skill_contract.py::test_skill_stays_lean_and_points_to_conditional_references"},
     {"id":"REP-06","domain":"reporting_efficiency","name":"Status hot path remains within p95 budget","priority":"P1","negative":false,"status":"benchmark","evidence":"status_p95_ms"},
-    {"id":"REP-07","domain":"reporting_efficiency","name":"Begin mutation path remains within p95 budget","priority":"P1","negative":false,"status":"benchmark","evidence":"begin_p95_ms"}
+    {"id":"REP-07","domain":"reporting_efficiency","name":"Begin mutation path remains within p95 budget","priority":"P1","negative":false,"status":"benchmark","evidence":"begin_p95_ms"},
+
+    {"id":"CTL-01","domain":"control_plane","name":"SQLite canonical store uses the version two schema","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_sqlite_control_plane_uses_version_two_schema"},
+    {"id":"CTL-02","domain":"control_plane","name":"Version one projection migrates lazily without state loss","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_v1_projection_migrates_to_sqlite_without_losing_state"},
+    {"id":"CTL-03","domain":"control_plane","name":"Non-config commands reject ledger root drift","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_non_config_command_rejects_a_different_ledger_root"},
+    {"id":"CTL-04","domain":"control_plane","name":"Enter receipt self-locates and persists its preflight","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_enter_receipt_is_self_locating_and_records_preflight"},
+    {"id":"CTL-05","domain":"control_plane","name":"Completed operation replay is idempotent","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_completed_operation_id_replays_without_duplicate_event"},
+    {"id":"CTL-06","domain":"control_plane","name":"Incomplete operations remain inspectable","priority":"P1","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_inspect_reports_an_incomplete_operation"},
+    {"id":"CTL-07","domain":"control_plane","name":"Projection drift is diagnosed and repaired from canonical state","priority":"P1","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_inspect_detects_a_projection_mismatch"},
+
+    {"id":"VIN-01","domain":"verification_integrity","name":"Exact verified state transfers to its promoted commit","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_verification_state_is_carried_to_an_exact_promoted_commit"},
+    {"id":"VIN-02","domain":"verification_integrity","name":"Partial promotion cannot inherit unrelated tested state","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_verification_is_not_carried_when_unrelated_state_was_tested"},
+
+    {"id":"CON-01","domain":"concurrency","name":"Concurrent threads have one branch owner","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_concurrent_threads_cannot_claim_the_same_branch"},
+    {"id":"CON-02","domain":"concurrency","name":"Park releases branch ownership","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_park_releases_the_branch_for_another_thread"},
+    {"id":"CON-03","domain":"concurrency","name":"Successful ship releases branch ownership","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_successful_ship_releases_the_branch_claim"},
+    {"id":"CON-04","domain":"concurrency","name":"Clean no-op post-hook releases an idle claim","priority":"P1","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_post_hook_releases_a_clean_no_op_claim"},
+    {"id":"CON-05","domain":"concurrency","name":"Dirty post-hook retains the active claim","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_post_hook_retains_a_dirty_claim"},
+
+    {"id":"ENF-01","domain":"enforcement","name":"Read-only hook path is silent and stateless","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_hook_is_silent_for_read_only_tools_and_creates_no_state"},
+    {"id":"ENF-02","domain":"enforcement","name":"Mutation hook enters before persistent change","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_hook_silently_enters_before_a_mutation"},
+    {"id":"ENF-03","domain":"enforcement","name":"Unconfigured mutation fails closed","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_hook_denies_a_mutation_when_configuration_is_missing"},
+    {"id":"ENF-04","domain":"enforcement","name":"Hook rejects a second thread on an owned branch","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_hook_denies_a_second_thread_claiming_the_same_branch"},
+    {"id":"ENF-05","domain":"enforcement","name":"Hook blocks direct Git delivery commands","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_hook_blocks_direct_git_delivery_commands"},
+    {"id":"ENF-06","domain":"enforcement","name":"Guard and hook paths remain within p95 budgets","priority":"P1","negative":false,"status":"benchmark","evidence":"guard_hook_p95_ms"}
   ]
 }

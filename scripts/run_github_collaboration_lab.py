@@ -29,6 +29,7 @@ def run(
     *,
     cwd: Path | None = None,
     expected: int = 0,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     rendered = [str(item) for item in command]
     result = subprocess.run(
@@ -37,6 +38,7 @@ def run(
         capture_output=True,
         text=True,
         check=False,
+        env={**os.environ, **(env or {})},
     )
     if result.returncode != expected:
         raise LabError(
@@ -82,11 +84,23 @@ def checkpoint(
     *extra: str,
     expected: int = 0,
 ) -> dict[str, Any]:
+    codex_home = ledger_root.parent / "codex-home"
+    environment = {"CODEX_HOME": str(codex_home)}
+    config_path = codex_home / "checkpoint-thread" / "config.json"
+    if not config_path.exists():
+        run(
+            [
+                sys.executable,
+                str(CHECKPOINT_CLI),
+                "--ledger-root",
+                str(ledger_root),
+                "configure",
+            ],
+            env=environment,
+        )
     args = [
         sys.executable,
         str(CHECKPOINT_CLI),
-        "--ledger-root",
-        str(ledger_root),
         "--ledger-id",
         ledger_id,
         command,
@@ -94,7 +108,7 @@ def checkpoint(
     if repo is not None:
         args.extend(["--repo", str(repo)])
     args.extend(extra)
-    result = run(args, expected=expected)
+    result = run(args, expected=expected, env=environment)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as error:

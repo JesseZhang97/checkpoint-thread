@@ -14,6 +14,14 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Sequence
 
+from checkpoint_store import (
+    SCHEMA_VERSION,
+    ControlPlane,
+    ControlPlaneError,
+    database_path,
+    projection_path,
+)
+
 
 DEFAULT_LARGE_FILE_LIMIT = 25 * 1024 * 1024
 SECRET_BASENAMES = {
@@ -35,6 +43,11 @@ GENERATED_COMPONENTS = {
     "playwright-report",
     "test-results",
 }
+
+LAST_EVENT_ID: str | None = None
+ACTIVE_COMMAND: str | None = None
+ACTIVE_REPO: Path | None = None
+ACTIVE_STATE_OID: str | None = None
 
 
 class CheckpointError(Exception):
@@ -264,7 +277,7 @@ def worktree_id_for(root: Path) -> str:
 
 
 def ledger_path(root: Path, ledger_id: str) -> Path:
-    return root / safe_component(ledger_id) / "ledger.json"
+    return projection_path(root, safe_component(ledger_id))
 
 
 def load_configuration() -> dict[str, Any] | None:
@@ -277,7 +290,11 @@ def load_configuration() -> dict[str, Any] | None:
         raise CheckpointError(
             "configuration_unreadable", path=str(path), detail=str(error)
         ) from error
-    if payload.get("version") != 1 or not isinstance(payload.get("ledger_root"), str):
+    if (
+        not isinstance(payload, dict)
+        or payload.get("version") != 1
+        or not isinstance(payload.get("ledger_root"), str)
+    ):
         raise CheckpointError("configuration_invalid", path=str(path))
     return payload
 
@@ -318,7 +335,7 @@ def ledger_lock(root: Path, ledger_id: str) -> Iterator[None]:
 
 def new_ledger(ledger_id: str) -> dict[str, Any]:
     return {
-        "version": 1,
+        "version": SCHEMA_VERSION,
         "ledger_id": ledger_id,
         "state": "active",
         "created_at": now_iso(),
@@ -328,34 +345,84 @@ def new_ledger(ledger_id: str) -> dict[str, Any]:
 
 
 def load_ledger(root: Path, ledger_id: str, *, required: bool = True) -> dict[str, Any]:
-    path = ledger_path(root, ledger_id)
-    if not path.exists():
-        if required:
-            raise CheckpointError("ledger_not_found", ledger_id=ledger_id)
-        return new_ledger(ledger_id)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise CheckpointError(
-            "ledger_unreadable", path=str(path), detail=str(error)
-        ) from error
+        ledger, _ = ControlPlane(root).load(ledger_id, required=required)
+    except ControlPlaneError as error:
+        raise CheckpointError(error.code, **error.details) from error
+    return ledger if ledger is not None else new_ledger(ledger_id)
 
 
-def save_ledger(root: Path, ledger_id: str, ledger: dict[str, Any]) -> None:
-    path = ledger_path(root, ledger_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ledger["updated_at"] = now_iso()
-    fd, temporary = tempfile.mkstemp(prefix="ledger-", suffix=".tmp", dir=path.parent)
+def save_ledger(
+    root: Path,
+    ledger_id: str,
+    ledger: dict[str, Any],
+    *,
+    operation: str | None = None,
+    repo_id: str | None = None,
+    branch: str | None = None,
+    head: str | None = None,
+    state_oid: str | None = None,
+    status: str = "completed",
+    detail: dict[str, Any] | None = None,
+) -> str:
+    global LAST_EVENT_ID
+    if ACTIVE_REPO is not None:
+        if repo_id is None:
+            with contextlib.suppress(CheckpointError):
+                repo_id = repo_id_for(common_git_dir(ACTIVE_REPO))
+        if branch is None:
+            with contextlib.suppress(CheckpointError):
+                branch = current_branch(ACTIVE_REPO)
+        if head is None:
+            with contextlib.suppress(CheckpointError):
+                head = head_sha(ACTIVE_REPO)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(ledger, handle, ensure_ascii=False, sort_keys=True, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        event_id = ControlPlane(root).save(
+            ledger_id,
+            ledger,
+            event={
+                "operation": operation or ACTIVE_COMMAND or "state_saved",
+                "repo_id": repo_id,
+                "branch": branch,
+                "head": head,
+                "state_oid": state_oid or ACTIVE_STATE_OID,
+                "status": status,
+                "detail": detail or {},
+            },
+        )
+    except ControlPlaneError as error:
+        raise CheckpointError(error.code, **error.details) from error
+    assert event_id is not None
+    LAST_EVENT_ID = event_id
+    return event_id
+
+
+def ensure_branch_claim(
+    ledger_root: Path, ledger_id: str, root: Path, branch: str
+) -> dict[str, Any]:
+    repo_id = repo_id_for(common_git_dir(root))
+    try:
+        return ControlPlane(ledger_root).acquire_claim(
+            ledger_id=ledger_id,
+            repo_id=repo_id,
+            branch=branch,
+            repo_root=str(root),
+        )
+    except ControlPlaneError as error:
+        raise CheckpointError(error.code, **error.details) from error
+
+
+def release_branch_claim(
+    ledger_root: Path, ledger_id: str, repo_id: str, branch: str
+) -> bool:
+    try:
+        return ControlPlane(ledger_root).release_claim(
+            ledger_id=ledger_id,
+            repo_id=repo_id,
+            branch=branch,
+        )
+    except ControlPlaneError as error:
+        raise CheckpointError(error.code, **error.details) from error
 
 
 def find_repo_entry(ledger: dict[str, Any], root: Path) -> tuple[str, dict[str, Any]]:
@@ -409,19 +476,9 @@ def git_add_paths(
     git(root, *args, env=env, input_bytes=pathspec_bytes(paths))
 
 
-def snapshot_internal(
-    *,
-    ledger: dict[str, Any],
-    ledger_id: str,
-    root: Path,
-    branch: str,
-    kind: str,
-    reason: str,
-    large_file_limit: int,
-) -> dict[str, Any]:
+def capture_state(root: Path, large_file_limit: int) -> dict[str, Any]:
     changes = ensure_clean_operation_state(root)
     ignored = collect_ignored_paths(root)
-    _, _, branch_entry = find_branch_entry(ledger, root, branch)
     secret = sorted(
         path for path in set(sum(changes.values(), [])) if is_secret_path(path)
     )
@@ -430,7 +487,7 @@ def snapshot_internal(
         raise CheckpointError(
             "staged_secret_paths",
             paths=staged_secret,
-            message="Remove secret paths from the index before creating a Git snapshot.",
+            message="Remove secret paths from the index before capturing Git state.",
         )
     generated = sorted(
         path for path in changes["untracked"] if is_generated_output(path)
@@ -440,12 +497,7 @@ def snapshot_internal(
         set(secret) & (set(changes["unstaged"]) | set(changes["untracked"]))
     )
     excluded = set(generated) | set(large) | set(excluded_secret)
-
     index_tree = text(git(root, "write-tree"))
-    head = head_sha(root)
-    sequence = len(branch_entry["checkpoints"]) + 1
-    prefix = f"checkpoint-thread {ledger_id} {branch} {sequence:04d}"
-    index_commit = commit_tree(root, index_tree, head, f"{prefix} index")
 
     fd, temporary_index = tempfile.mkstemp(prefix="checkpoint-index-")
     os.close(fd)
@@ -461,6 +513,39 @@ def snapshot_internal(
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(temporary_index)
+
+    return {
+        "changes": changes,
+        "index_oid": index_tree,
+        "state_oid": worktree_tree,
+        "complete": not excluded,
+        "excluded": {
+            "secret": excluded_secret,
+            "ignored": ignored,
+            "large_untracked": large,
+            "generated_output": generated,
+        },
+    }
+
+
+def snapshot_internal(
+    *,
+    ledger: dict[str, Any],
+    ledger_id: str,
+    root: Path,
+    branch: str,
+    kind: str,
+    reason: str,
+    large_file_limit: int,
+) -> dict[str, Any]:
+    state = capture_state(root, large_file_limit)
+    _, _, branch_entry = find_branch_entry(ledger, root, branch)
+    index_tree = state["index_oid"]
+    worktree_tree = state["state_oid"]
+    head = head_sha(root)
+    sequence = len(branch_entry["checkpoints"]) + 1
+    prefix = f"checkpoint-thread {ledger_id} {branch} {sequence:04d}"
+    index_commit = commit_tree(root, index_tree, head, f"{prefix} index")
 
     worktree_commit = commit_tree(
         root, worktree_tree, index_commit, f"{prefix} worktree"
@@ -478,14 +563,11 @@ def snapshot_internal(
         "head": head,
         "index_commit": index_commit,
         "worktree_commit": worktree_commit,
+        "index_oid": index_tree,
+        "state_oid": worktree_tree,
         "ref": ref,
-        "complete": not excluded,
-        "excluded": {
-            "secret": excluded_secret,
-            "ignored": ignored,
-            "large_untracked": large,
-            "generated_output": generated,
-        },
+        "complete": state["complete"],
+        "excluded": state["excluded"],
     }
     branch_entry["checkpoints"].append(checkpoint)
     return checkpoint
@@ -519,6 +601,7 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
             worktree_entry["branches"].sort()
         existing = repo_entry["branches"].get(branch)
         if existing is not None:
+            claim = ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
             save_ledger(args.ledger_root, args.ledger_id, ledger)
             return {
                 "ok": True,
@@ -529,8 +612,10 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
                 "branch": branch,
                 "head": existing["baseline_head"],
                 "baseline_ref": existing["baseline_ref"],
+                "claim": claim,
             }
 
+        claim = ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         branch_entry = {
             "branch": branch,
             "baseline_head": head_sha(root),
@@ -543,17 +628,39 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
             "verification": [],
         }
         repo_entry["branches"][branch] = branch_entry
-        checkpoint = snapshot_internal(
-            ledger=ledger,
-            ledger_id=args.ledger_id,
-            root=root,
-            branch=branch,
-            kind="baseline",
-            reason="thread baseline",
-            large_file_limit=args.large_file_limit,
-        )
+        try:
+            checkpoint = snapshot_internal(
+                ledger=ledger,
+                ledger_id=args.ledger_id,
+                root=root,
+                branch=branch,
+                kind="baseline",
+                reason="thread baseline",
+                large_file_limit=args.large_file_limit,
+            )
+        except Exception:
+            if claim["action"] == "acquired":
+                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
+            raise
         branch_entry["baseline_ref"] = checkpoint["ref"]
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        branch_entry["preflight"] = {
+            "checked_at": checkpoint["created_at"],
+            "result": "passed",
+            "head": branch_entry["baseline_head"],
+            "branch": branch,
+            "operation_state": None,
+            "initial_changes": changes,
+        }
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="enter",
+            repo_id=repo_id,
+            branch=branch,
+            head=branch_entry["baseline_head"],
+            state_oid=checkpoint.get("state_oid"),
+        )
         return {
             "ok": True,
             "action": "begun",
@@ -564,6 +671,8 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
             "head": branch_entry["baseline_head"],
             "baseline_ref": checkpoint["ref"],
             "baseline_complete": checkpoint["complete"],
+            "preflight": branch_entry["preflight"],
+            "claim": claim,
         }
 
 
@@ -578,7 +687,7 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     branch_registered = bool(repo_entry and branch in repo_entry["branches"])
     if changes["unmerged"] or operation:
         action = "blocked"
-    elif not ledger_path(args.ledger_root, args.ledger_id).exists():
+    elif not ledger["repos"]:
         action = "begin"
     elif not branch_registered:
         action = "enroll"
@@ -597,12 +706,125 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_guard(args: argparse.Namespace) -> dict[str, Any]:
+    status = command_status(args)
+    if status["action"] == "blocked":
+        raise CheckpointError(
+            "guard_blocked",
+            repo=status["repo"],
+            branch=status["branch"],
+            operation=status["operation"],
+            changes=status["changes"],
+        )
+    if status["action"] in {"begin", "enroll"}:
+        entered = command_begin(args)
+        return {
+            "ok": True,
+            "action": "allowed",
+            "guard": "entered",
+            "enter": entered,
+            "repo": entered["repo"],
+            "repo_id": entered["repo_id"],
+            "branch": entered["branch"],
+        }
+    root = repo_root(args.repo)
+    claim = ensure_branch_claim(
+        args.ledger_root,
+        args.ledger_id,
+        root,
+        status["branch"],
+    )
+    with ledger_lock(args.ledger_root, args.ledger_id):
+        ledger = load_ledger(args.ledger_root, args.ledger_id)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="guard",
+            repo_id=status["repo_id"],
+            branch=status["branch"],
+            head=head_sha(root),
+        )
+    return {
+        "ok": True,
+        "action": "allowed",
+        "guard": "active",
+        "repo": status["repo"],
+        "repo_id": status["repo_id"],
+        "branch": status["branch"],
+        "claim": claim,
+    }
+
+
+def command_settle(args: argparse.Namespace) -> dict[str, Any]:
+    root = repo_root(args.repo)
+    branch = current_branch(root)
+    changes = collect_changes(root)
+    operation = operation_state(root)
+    with ledger_lock(args.ledger_root, args.ledger_id):
+        ledger = load_ledger(args.ledger_root, args.ledger_id)
+        repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
+        unresolved = [
+            checkpoint["ref"]
+            for checkpoint in branch_entry["checkpoints"]
+            if checkpoint["kind"] != "baseline" and not checkpoint.get("resolution")
+        ]
+        latest_commit = (
+            branch_entry["thread_commits"][-1]["commit"]
+            if branch_entry["thread_commits"]
+            else None
+        )
+        unpublished = bool(
+            latest_commit and latest_commit != branch_entry.get("last_shipped_commit")
+        )
+        dirty = any(
+            changes[key] for key in ("staged", "unstaged", "untracked", "unmerged")
+        )
+        blockers = []
+        if operation:
+            blockers.append("git_operation_in_progress")
+        if dirty:
+            blockers.append("worktree_dirty")
+        if unresolved:
+            blockers.append("unresolved_checkpoints")
+        if unpublished:
+            blockers.append("unpublished_thread_commits")
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="settle",
+            repo_id=repo_id,
+            branch=branch,
+            head=head_sha(root),
+            detail={"blockers": blockers},
+        )
+        released = False
+        if not blockers:
+            released = release_branch_claim(
+                args.ledger_root,
+                args.ledger_id,
+                repo_id,
+                branch,
+            )
+        return {
+            "ok": True,
+            "action": "claim_released" if released else "claim_retained",
+            "repo": str(root),
+            "repo_id": repo_id,
+            "branch": branch,
+            "blockers": blockers,
+            "unresolved_checkpoints": unresolved,
+        }
+
+
 def command_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     root = repo_root(args.repo)
     ensure_clean_operation_state(root)
     branch = current_branch(root)
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = snapshot_internal(
             ledger=ledger,
             ledger_id=args.ledger_id,
@@ -638,7 +860,8 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
     original_changes = ensure_clean_operation_state(root)
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
-        _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = snapshot_internal(
             ledger=ledger,
             ledger_id=args.ledger_id,
@@ -692,6 +915,7 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
         branch_entry["parked_ref"] = checkpoint["ref"]
         branch_entry["state"] = "parked"
         save_ledger(args.ledger_root, args.ledger_id, ledger)
+        release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
         return {
             "ok": True,
             "action": "parked",
@@ -719,6 +943,7 @@ def command_restore(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = checkpoint_for_ref(branch_entry, args.ref)
         if not checkpoint["complete"]:
             raise CheckpointError(
@@ -842,6 +1067,7 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         preexisting = set(branch_entry["initial_changes"]["staged"])
         preexisting |= set(branch_entry["initial_changes"]["unstaged"])
         preexisting |= set(branch_entry["initial_changes"]["untracked"])
@@ -930,8 +1156,24 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             source_checkpoint = checkpoint_for_ref(branch_entry, args.checkpoint_ref)
             source_checkpoint["resolution"] = "promoted"
             source_checkpoint["resolved_commit"] = commit_sha
+        carried_verifications = []
+        if checkpoint["complete"] and all_changes <= selected_set:
+            for verification in branch_entry["verification"]:
+                if verification["status"] == "passed" and verification.get(
+                    "state_oid"
+                ) == checkpoint.get("state_oid"):
+                    verification["verified_commit"] = commit_sha
+                    carried_verifications.append(verification["command"])
         branch_entry["thread_commits"].append(record)
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="promote",
+            head=commit_sha,
+            state_oid=checkpoint.get("state_oid"),
+            detail={"paths": selected, "carried_verifications": carried_verifications},
+        )
         return {
             "ok": True,
             "action": "promoted",
@@ -940,6 +1182,7 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             "commit": commit_sha,
             "paths": selected,
             "checkpoint_ref": checkpoint["ref"],
+            "carried_verifications": carried_verifications,
         }
 
 
@@ -949,6 +1192,7 @@ def command_resolve_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = checkpoint_for_ref(branch_entry, args.ref)
         if checkpoint["kind"] == "baseline":
             raise CheckpointError("baseline_cannot_be_resolved", ref=args.ref)
@@ -974,6 +1218,8 @@ def command_record_verification(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+        state = capture_state(root, args.large_file_limit)
         record = {
             "command": args.verification_command,
             "status": args.status,
@@ -981,9 +1227,19 @@ def command_record_verification(args: argparse.Namespace) -> dict[str, Any]:
             "evidence": args.evidence,
             "recorded_at": now_iso(),
             "head": head_sha(root),
+            "state_oid": state["state_oid"],
+            "state_complete": state["complete"],
+            "state_exclusions": state["excluded"],
         }
         branch_entry["verification"].append(record)
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="verify",
+            state_oid=state["state_oid"],
+            status=args.status,
+        )
         return {
             "ok": True,
             "action": "verification_recorded",
@@ -1263,7 +1519,8 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
             stale_verification = [
                 item
                 for item in verification
-                if item["status"] == "passed" and item.get("head") != local_tip
+                if item["status"] == "passed"
+                and item.get("verified_commit", item.get("head")) != local_tip
             ]
             if verification_failed:
                 blockers.append("fix_and_rerun_verification")
@@ -1581,29 +1838,217 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
                 for item in plan["branches"]
             ],
         }
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        for item in plan["branches"]:
+            if item["push_status"] == "pushed":
+                repo_entry = ledger["repos"][item["repo_id"]]
+                repo_entry["branches"][item["branch"]]["last_shipped_commit"] = item[
+                    "local_tip"
+                ]
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="ship",
+            detail={"branch_count": len(plan["branches"])},
+        )
+        for item in plan["branches"]:
+            if item["push_status"] == "pushed":
+                release_branch_claim(
+                    args.ledger_root,
+                    args.ledger_id,
+                    item["repo_id"],
+                    item["branch"],
+                )
         return plan
 
 
 def command_ledger_status(args: argparse.Namespace) -> dict[str, Any]:
     ledger = load_ledger(args.ledger_root, args.ledger_id)
+    control_plane = ControlPlane(args.ledger_root)
     repos = []
+    integrity_issues: list[dict[str, Any]] = []
     for entry in ledger["repos"].values():
+        root = Path(entry["root"])
+        branches = []
+        for branch_name, branch_entry in sorted(entry["branches"].items()):
+            claim = control_plane.claim(repo_id=entry["id"], branch=branch_name)
+            if claim is not None and claim["ledger_id"] != args.ledger_id:
+                integrity_issues.append(
+                    {
+                        "type": "branch_claim_mismatch",
+                        "repo_id": entry["id"],
+                        "branch": branch_name,
+                        "owner_ledger_id": claim["ledger_id"],
+                    }
+                )
+            missing_refs = []
+            if root.exists():
+                for checkpoint in branch_entry["checkpoints"]:
+                    if not ref_exists(root, checkpoint["ref"]):
+                        missing_refs.append(checkpoint["ref"])
+                        integrity_issues.append(
+                            {
+                                "type": "missing_checkpoint_ref",
+                                "repo_id": entry["id"],
+                                "branch": branch_name,
+                                "ref": checkpoint["ref"],
+                            }
+                        )
+            else:
+                integrity_issues.append(
+                    {
+                        "type": "repo_missing",
+                        "repo_id": entry["id"],
+                        "root": str(root),
+                    }
+                )
+            branches.append(
+                {
+                    "name": branch_name,
+                    "claim": claim,
+                    "checkpoint_count": len(branch_entry["checkpoints"]),
+                    "missing_refs": missing_refs,
+                }
+            )
         repos.append(
             {
                 "id": entry["id"],
                 "root": entry["root"],
                 "worktree_count": len(entry["worktrees"]),
                 "branches": sorted(entry["branches"]),
+                "branch_integrity": branches,
             }
         )
     repos.sort(key=lambda item: item["root"])
+    projection_matches = control_plane.projection_matches(args.ledger_id, ledger)
+    if not projection_matches:
+        integrity_issues.append({"type": "projection_mismatch"})
+    incomplete_operations = control_plane.incomplete_operations(args.ledger_id)
+    for operation in incomplete_operations:
+        integrity_issues.append({"type": "incomplete_operation", **operation})
     return {
         "ok": True,
         "ledger_id": args.ledger_id,
         "state": ledger["state"],
         "repo_count": len(repos),
         "repos": repos,
+        "event_count": control_plane.event_count(args.ledger_id),
+        "projection_matches": projection_matches,
+        "incomplete_operations": incomplete_operations,
+        "integrity": "ok" if not integrity_issues else "issues",
+        "integrity_issues": integrity_issues,
+    }
+
+
+def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
+    control_plane = ControlPlane(args.ledger_root)
+    inventory = control_plane.inventory()
+    ledgers = inventory["ledgers"]
+    ledger_ids = set(ledgers)
+    issues: list[dict[str, Any]] = []
+    repaired_projections: list[str] = []
+
+    projections: dict[str, Path] = {}
+    for path in args.ledger_root.rglob("ledger.json"):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            ledger_id = payload.get("ledger_id") if isinstance(payload, dict) else None
+        except (OSError, json.JSONDecodeError) as error:
+            issues.append(
+                {
+                    "type": "projection_unreadable",
+                    "path": str(path),
+                    "detail": str(error),
+                }
+            )
+            continue
+        if not isinstance(ledger_id, str):
+            issues.append({"type": "projection_missing_ledger_id", "path": str(path)})
+            continue
+        projections[ledger_id] = path
+
+    recorded_refs_by_repo: dict[Path, set[str]] = {}
+    for ledger_id, ledger in ledgers.items():
+        path = projection_path(args.ledger_root, ledger_id)
+        projection_matches = control_plane.projection_matches(ledger_id, ledger)
+        if not projection_matches and args.repair_projections:
+            control_plane.write_projection(ledger_id, ledger)
+            repaired_projections.append(str(path))
+            issues = [item for item in issues if item.get("path") != str(path)]
+            projections[ledger_id] = path
+            projection_matches = True
+        if not projection_matches:
+            issues.append(
+                {
+                    "type": "projection_missing_or_mismatched",
+                    "ledger_id": ledger_id,
+                    "path": str(path),
+                }
+            )
+        for repo_entry in ledger["repos"].values():
+            root = Path(repo_entry["root"])
+            recorded = recorded_refs_by_repo.setdefault(root, set())
+            for branch_entry in repo_entry["branches"].values():
+                for checkpoint in branch_entry["checkpoints"]:
+                    recorded.add(checkpoint["ref"])
+                    if root.exists() and not ref_exists(root, checkpoint["ref"]):
+                        issues.append(
+                            {
+                                "type": "missing_checkpoint_ref",
+                                "ledger_id": ledger_id,
+                                "repo": str(root),
+                                "ref": checkpoint["ref"],
+                            }
+                        )
+                for item in branch_entry.get("history_safety_refs", []):
+                    recorded.add(item["ref"])
+
+    for ledger_id, path in projections.items():
+        if ledger_id not in ledger_ids:
+            issues.append(
+                {
+                    "type": "orphan_projection",
+                    "ledger_id": ledger_id,
+                    "path": str(path),
+                }
+            )
+    for claim in inventory["claims"]:
+        owner = ledgers.get(claim["ledger_id"])
+        branch_exists = bool(
+            owner
+            and claim["repo_id"] in owner["repos"]
+            and claim["branch"] in owner["repos"][claim["repo_id"]]["branches"]
+        )
+        if not branch_exists:
+            issues.append({"type": "orphan_branch_claim", **claim})
+    for operation in inventory["incomplete_operations"]:
+        issues.append({"type": "incomplete_operation", **operation})
+    for root, recorded in recorded_refs_by_repo.items():
+        if not root.exists():
+            continue
+        actual = set(
+            text(
+                git(
+                    root,
+                    "for-each-ref",
+                    "--format=%(refname)",
+                    "refs/codex/checkpoint-thread/",
+                )
+            ).splitlines()
+        )
+        for ref in sorted(actual - recorded):
+            issues.append({"type": "orphan_private_ref", "repo": str(root), "ref": ref})
+
+    return {
+        "ok": True,
+        "action": "diagnosed",
+        "database_exists": control_plane.path.exists(),
+        "ledger_ids": sorted(ledger_ids),
+        "branch_claims": inventory["claims"],
+        "incomplete_operations": inventory["incomplete_operations"],
+        "repaired_projections": repaired_projections,
+        "integrity": "ok" if not issues else "issues",
+        "integrity_issues": issues,
     }
 
 
@@ -1639,8 +2084,6 @@ def command_configure(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def resolve_ledger_root(value: Path | None) -> Path:
-    if value is not None:
-        return value.expanduser().resolve()
     configuration = load_configuration()
     if configuration is None:
         raise CheckpointError(
@@ -1649,7 +2092,16 @@ def resolve_ledger_root(value: Path | None) -> Path:
             suggested_ledger_root=str(suggested_ledger_root().resolve()),
             solution="ask_user_then_run_configure",
         )
-    return Path(configuration["ledger_root"]).expanduser().resolve()
+    configured = Path(configuration["ledger_root"]).expanduser().resolve()
+    if value is not None and value.expanduser().resolve() != configured:
+        raise CheckpointError(
+            "ledger_root_mismatch",
+            config_path=str(configuration_path()),
+            configured_ledger_root=str(configured),
+            requested_ledger_root=str(value.expanduser().resolve()),
+            solution="use_configured_root_or_configure_replace_after_confirmation",
+        )
+    return configured
 
 
 def add_repo_argument(parser: argparse.ArgumentParser) -> None:
@@ -1660,6 +2112,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Deterministic Git checkpoint helper")
     parser.add_argument("--ledger-root", type=Path)
     parser.add_argument("--ledger-id")
+    parser.add_argument("--operation-id")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     configure = subparsers.add_parser("configure")
@@ -1671,6 +2124,22 @@ def build_parser() -> argparse.ArgumentParser:
     begin.add_argument("--merge-target")
     begin.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
     begin.set_defaults(handler=command_begin)
+
+    enter = subparsers.add_parser("enter")
+    add_repo_argument(enter)
+    enter.add_argument("--merge-target")
+    enter.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
+    enter.set_defaults(handler=command_begin)
+
+    guard = subparsers.add_parser("guard")
+    add_repo_argument(guard)
+    guard.add_argument("--merge-target")
+    guard.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
+    guard.set_defaults(handler=command_guard)
+
+    settle = subparsers.add_parser("settle")
+    add_repo_argument(settle)
+    settle.set_defaults(handler=command_settle)
 
     status = subparsers.add_parser("status")
     add_repo_argument(status)
@@ -1733,6 +2202,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     verification.add_argument("--scope", required=True)
     verification.add_argument("--evidence")
+    verification.add_argument(
+        "--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT
+    )
     verification.set_defaults(handler=command_record_verification)
 
     ship_plan = subparsers.add_parser("ship-plan")
@@ -1745,24 +2217,88 @@ def build_parser() -> argparse.ArgumentParser:
 
     ledger_status = subparsers.add_parser("ledger-status")
     ledger_status.set_defaults(handler=command_ledger_status)
+
+    inspect = subparsers.add_parser("inspect")
+    inspect.add_argument("--check", action="store_true")
+    inspect.set_defaults(handler=command_ledger_status)
+
+    doctor = subparsers.add_parser("doctor")
+    doctor.add_argument("--repair-projections", action="store_true")
+    doctor.set_defaults(handler=command_doctor)
     return parser
 
 
+def receipt_envelope(
+    payload: dict[str, Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    result = {"schema_version": SCHEMA_VERSION, **payload}
+    result.setdefault("config_path", str(configuration_path()))
+    ledger_root = getattr(args, "ledger_root", None)
+    if args.command == "configure":
+        configured = result.get("ledger_root")
+        if configured:
+            ledger_root = Path(configured)
+    if ledger_root is not None:
+        result.setdefault("ledger_root", str(ledger_root))
+        result.setdefault("control_plane_path", str(database_path(ledger_root)))
+        ledger_id = getattr(args, "ledger_id", None)
+        if ledger_id:
+            result.setdefault("ledger_path", str(ledger_path(ledger_root, ledger_id)))
+    if LAST_EVENT_ID is not None:
+        result.setdefault("event_id", LAST_EVENT_ID)
+    if getattr(args, "operation_id", None):
+        result.setdefault("operation_id", args.operation_id)
+    return result
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    global ACTIVE_COMMAND, ACTIVE_REPO, ACTIVE_STATE_OID, LAST_EVENT_ID
     parser = build_parser()
     args = parser.parse_args(argv)
+    operation_started = False
     try:
         if args.command != "configure":
-            if not args.ledger_id:
+            if args.command != "doctor" and not args.ledger_id:
                 raise CheckpointError("ledger_id_required")
             args.ledger_root = resolve_ledger_root(args.ledger_root)
         if hasattr(args, "repo"):
             args.repo = args.repo.expanduser().resolve()
-        return emit(args.handler(args))
+        ACTIVE_COMMAND = args.command
+        ACTIVE_REPO = getattr(args, "repo", None)
+        ACTIVE_STATE_OID = None
+        LAST_EVENT_ID = None
+        if args.command != "configure" and args.operation_id:
+            if not args.ledger_id:
+                raise CheckpointError("ledger_id_required_for_operation")
+            try:
+                replay = ControlPlane(args.ledger_root).start_operation(
+                    ledger_id=args.ledger_id,
+                    operation_id=args.operation_id,
+                    command=args.command,
+                )
+            except ControlPlaneError as error:
+                raise CheckpointError(error.code, **error.details) from error
+            if replay is not None:
+                return emit({**replay, "replayed": True})
+            operation_started = True
+        result = receipt_envelope(args.handler(args), args)
+        if operation_started:
+            ControlPlane(args.ledger_root).complete_operation(
+                ledger_id=args.ledger_id,
+                operation_id=args.operation_id,
+                receipt=result,
+            )
+        return emit(result)
     except CheckpointError as error:
-        return emit(error.payload, code=2)
+        return emit(receipt_envelope(error.payload, args), code=2)
+    except ControlPlaneError as error:
+        payload = {"ok": False, "error": error.code, **error.details}
+        return emit(receipt_envelope(payload, args), code=2)
     except KeyboardInterrupt:
-        return emit({"ok": False, "error": "interrupted"}, code=130)
+        return emit(
+            receipt_envelope({"ok": False, "error": "interrupted"}, args),
+            code=130,
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,34 @@
+{
+  "name": "checkpoint-thread",
+  "version": "2.0.0",
+  "description": "Enforce thread-scoped Git checkpoints before Codex mutations and ship only verified, thread-owned work.",
+  "author": {
+    "name": "Jesse Zhang"
+  },
+  "repository": "https://github.com/JesseZhang97/checkpoint-thread",
+  "homepage": "https://github.com/JesseZhang97/checkpoint-thread",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "git",
+    "checkpoint",
+    "hooks",
+    "audit"
+  ],
+  "skills": "./skill/",
+  "interface": {
+    "displayName": "Checkpoint Thread",
+    "shortDescription": "Checkpoint and ship thread-owned Git work.",
+    "longDescription": "A lightweight skill plus PreToolUse guard that establishes a recoverable baseline before Codex mutates a repository, binds verification to exact Git state, and ships only thread-owned commits.",
+    "developerName": "Jesse Zhang",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Safety",
+      "Hooks",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use checkpoint-thread to make and ship this repository change safely."
+    ]
+  }
+}

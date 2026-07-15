@@ -1,0 +1,20 @@
+{
+  "name": "checkpoint-thread",
+  "interface": {
+    "displayName": "Checkpoint Thread"
+  },
+  "plugins": [
+    {
+      "name": "checkpoint-thread",
+      "source": {
+        "source": "local",
+        "path": "."
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Engineering"
+    }
+  ]
+}
