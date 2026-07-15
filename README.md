@@ -49,6 +49,10 @@ ${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active
 在第一次修改仓库之前，skill 会懒执行 `begin`。只读分析不会创建 ledger 或
 Git ref；继续调整同一个目标时也不会执行 checkpoint 命令。
 
+刚执行 `git init`、尚无初始 commit 的仓库也受支持：checkpoint 可以正常
+park/restore，第一次验收后的 `promote` 会创建只包含 task-owned 路径的 root
+commit。
+
 也可以在首次请求中显式触发：
 
 ```text
@@ -130,8 +134,9 @@ python3 skill/checkpoint-thread/scripts/checkpoint_thread.py \
 `${CODEX_HOME:-$HOME/.codex}/checkpoint-thread/config.json`。修改已有选择需要用户确认，
 并显式追加 `configure --replace`；单次命令仍可使用 `--ledger-root` 覆盖。
 
-设计与验收细节见 `SPEC.md`、`ACCEPTANCE_CRITERIA.md` 和
-`FINAL_REPORT.md`。运行完整验收：
+设计、架构精简度与验收细节见 `SPEC.md`、
+`ARCHITECTURE_ASSESSMENT.md`、`ACCEPTANCE_CRITERIA.md` 和 `FINAL_REPORT.md`。
+运行完整验收：
 
 ```bash
 python3 scripts/verify_acceptance.py \

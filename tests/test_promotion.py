@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import git, init_repo, run_cli
+from helpers import git, init_repo, init_unborn_repo, run, run_cli
 
 
 class PromotionTests(unittest.TestCase):
@@ -308,6 +308,182 @@ class PromotionTests(unittest.TestCase):
         self.assertIn("old-name.txt", names)
         self.assertIn("new-name.txt", names)
         self.assertTrue(names.startswith("R"))
+
+    def test_unborn_branch_checkpoint_lifecycle_promotes_and_ships_root_commit(
+        self,
+    ) -> None:
+        repo = init_unborn_repo(self.root / "unborn")
+        remote = self.root / "unborn.git"
+        run(["git", "init", "-q", "--bare", remote])
+        git(repo, "remote", "add", "origin", str(remote))
+        ledger_id = "unborn-thread"
+        begun = run_cli(
+            self.ledgers, ledger_id, "begin", repo, "--merge-target", "main"
+        )
+        self.assertIsNone(begun["head"])
+
+        (repo / "feature.txt").write_text("staged\n", encoding="utf-8")
+        git(repo, "add", "feature.txt")
+        (repo / "feature.txt").write_text("worktree\n", encoding="utf-8")
+        (repo / "notes.txt").write_text("notes\n", encoding="utf-8")
+        status_before = git(repo, "status", "--short").stdout
+        index_before = git(repo, "diff", "--cached").stdout
+
+        parked = run_cli(
+            self.ledgers,
+            ledger_id,
+            "park",
+            repo,
+            "--reason",
+            "switch away before initial commit",
+        )
+        self.assertEqual("", git(repo, "status", "--short").stdout)
+        self.assertNotEqual(
+            0, git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode
+        )
+
+        run_cli(
+            self.ledgers,
+            ledger_id,
+            "restore",
+            repo,
+            "--ref",
+            parked["ref"],
+            "--confirm",
+        )
+        self.assertEqual(status_before, git(repo, "status", "--short").stdout)
+        self.assertEqual(index_before, git(repo, "diff", "--cached").stdout)
+        self.assertEqual("worktree\n", (repo / "feature.txt").read_text())
+        run_cli(
+            self.ledgers,
+            ledger_id,
+            "resolve-checkpoint",
+            repo,
+            "--ref",
+            parked["ref"],
+            "--resolution",
+            "superseded",
+            "--reason",
+            "restored into the active worktree",
+        )
+
+        git(repo, "reset", "-q", "--", "feature.txt")
+        (repo / "unrelated.txt").write_text("staged user work\n", encoding="utf-8")
+        git(repo, "add", "unrelated.txt")
+        provisional = run_cli(
+            self.ledgers,
+            ledger_id,
+            "snapshot",
+            repo,
+            "--kind",
+            "provisional",
+            "--reason",
+            "implicit progression before root commit",
+        )
+        promoted = run_cli(
+            self.ledgers,
+            ledger_id,
+            "promote",
+            repo,
+            "--path",
+            "feature.txt",
+            "--checkpoint-ref",
+            provisional["ref"],
+            "--message",
+            "feat: create project root",
+            "--acceptance-source",
+            "explicit",
+        )
+
+        self.assertEqual(
+            promoted["commit"],
+            git(repo, "rev-list", "--max-parents=0", "HEAD").stdout.strip(),
+        )
+        self.assertEqual(
+            ["feature.txt"],
+            git(repo, "show", "--pretty=", "--name-only", "HEAD").stdout.splitlines(),
+        )
+        self.assertEqual(
+            "A  unrelated.txt\n?? notes.txt\n",
+            git(repo, "status", "--short").stdout,
+        )
+
+        git(repo, "restore", "--staged", "unrelated.txt")
+        (repo / "unrelated.txt").unlink()
+        (repo / "notes.txt").unlink()
+        run_cli(
+            self.ledgers,
+            ledger_id,
+            "record-verification",
+            repo,
+            "--verification-command",
+            "not-applicable",
+            "--status",
+            "not_applicable",
+            "--scope",
+            "fixture-only Git behavior",
+        )
+        shipped = run_cli(self.ledgers, ledger_id, "ship", None, "--fetch")
+        self.assertEqual("pushed", shipped["branches"][0]["push_status"])
+        self.assertEqual(
+            promoted["commit"],
+            git(remote, "rev-parse", "refs/heads/main").stdout.strip(),
+        )
+
+    def test_unborn_branch_does_not_claim_paths_present_before_begin(self) -> None:
+        repo = init_unborn_repo(self.root / "unborn-preexisting")
+        (repo / "existing.txt").write_text("user scaffold\n", encoding="utf-8")
+        ledger_id = "unborn-preexisting-thread"
+        run_cli(self.ledgers, ledger_id, "begin", repo)
+        (repo / "existing.txt").write_text("agent edit\n", encoding="utf-8")
+
+        result = run_cli(
+            self.ledgers,
+            ledger_id,
+            "promote",
+            repo,
+            "--path",
+            "existing.txt",
+            "--message",
+            "feat: claim user scaffold",
+            "--acceptance-source",
+            "explicit",
+            expected_code=2,
+        )
+
+        self.assertEqual("selected_path_preexisting", result["error"])
+        self.assertNotEqual(
+            0, git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode
+        )
+
+    def test_unborn_commit_hook_failure_keeps_repository_unborn(self) -> None:
+        repo = init_unborn_repo(self.root / "unborn-hook")
+        ledger_id = "unborn-hook-thread"
+        run_cli(self.ledgers, ledger_id, "begin", repo)
+        (repo / "root.txt").write_text("root\n", encoding="utf-8")
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook.chmod(0o755)
+
+        result = run_cli(
+            self.ledgers,
+            ledger_id,
+            "promote",
+            repo,
+            "--path",
+            "root.txt",
+            "--message",
+            "feat: blocked root commit",
+            "--acceptance-source",
+            "explicit",
+            expected_code=2,
+        )
+
+        self.assertEqual("commit_failed", result["error"])
+        self.assertNotEqual(
+            0, git(repo, "rev-parse", "--verify", "HEAD", check=False).returncode
+        )
+        self.assertEqual("?? root.txt\n", git(repo, "status", "--short").stdout)
 
 
 if __name__ == "__main__":

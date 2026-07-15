@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -360,6 +361,100 @@ class CollaborationAndShippingTests(unittest.TestCase):
             git(self.repo, "rev-parse", "feat/secondary").stdout.strip(),
             git(self.remote, "rev-parse", "refs/heads/feat/secondary").stdout.strip(),
         )
+
+    def test_atomic_group_race_rejects_every_ref_and_reports_every_branch_failed(
+        self,
+    ) -> None:
+        initial_remote_main = git(self.remote, "rev-parse", "main").stdout.strip()
+        (self.repo / "main-race.txt").write_text("local main\n", encoding="utf-8")
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "main-race.txt",
+            "--message",
+            "feat: local main in atomic race",
+            "--acceptance-source",
+            "explicit",
+        )
+        self.record_not_applicable(self.repo)
+        git(self.repo, "switch", "-qc", "feat/atomic-race", "origin/main")
+        run_cli(
+            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+        )
+        (self.repo / "secondary-race.txt").write_text(
+            "local secondary\n", encoding="utf-8"
+        )
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "secondary-race.txt",
+            "--message",
+            "feat: secondary in atomic race",
+            "--acceptance-source",
+            "explicit",
+        )
+        self.record_not_applicable(self.repo)
+
+        hook = self.repo / ".git" / "hooks" / "pre-push"
+        hook.write_text(
+            "#!/bin/sh\n"
+            "set -eu\n"
+            f"printf 'remote race\\n' > '{self.collaborator}/remote-race.txt'\n"
+            f"git -C '{self.collaborator}' add remote-race.txt\n"
+            f"git -C '{self.collaborator}' commit -qm 'test: advance during atomic push'\n"
+            f"git -C '{self.collaborator}' push -q origin main\n",
+            encoding="utf-8",
+        )
+        hook.chmod(0o755)
+
+        result = run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "ship",
+            None,
+            "--fetch",
+            expected_code=2,
+        )
+
+        self.assertEqual("push_failed", result["error"])
+        self.assertTrue(result["atomic"])
+        self.assertEqual([], result["completed"])
+        self.assertEqual({"main", "feat/atomic-race"}, set(result["branches"]))
+        self.assertTrue(
+            all(
+                branch["push_status"] == "failed"
+                and branch["push_mode"] == "atomic"
+                and branch["divergence_solution"] == "fetch_and_replan"
+                for branch in result["branches_report"]
+            )
+        )
+        remote_main = git(self.remote, "rev-parse", "main").stdout.strip()
+        self.assertNotEqual(initial_remote_main, remote_main)
+        self.assertNotEqual(
+            git(self.repo, "rev-parse", "main").stdout.strip(), remote_main
+        )
+        self.assertNotEqual(
+            0,
+            git(
+                self.remote,
+                "show-ref",
+                "--verify",
+                "--quiet",
+                "refs/heads/feat/atomic-race",
+                check=False,
+            ).returncode,
+        )
+        ledger = json.loads(
+            (self.ledgers / self.ledger_id / "ledger.json").read_text(encoding="utf-8")
+        )
+        self.assertTrue(ledger["last_ship_failure"]["atomic"])
+        self.assertEqual([], ledger["last_ship_failure"]["completed"])
 
     def test_merge_plan_infers_stacked_branch_dependencies_and_verification(
         self,

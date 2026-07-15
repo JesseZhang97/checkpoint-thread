@@ -33,6 +33,8 @@ stays within one concern until evidence supports a boundary.
   untracked files are excluded and reported; large tracked files are preserved.
 - Existing dirty paths, unrelated staged changes, local commits, and branches are
   not silently claimed as thread-owned.
+- An unborn branch can park and restore dirty state; its first accepted promotion
+  creates an exact-path root commit without claiming pre-existing files.
 - Remote-reachable history is never rewritten and pushes are never forced.
 
 ## Delivery invariants
@@ -43,6 +45,8 @@ stays within one concern until evidence supports a boundary.
   ownership check; conflicts block with a resolution sequence.
 - Branches for one remote push atomically. Cross-repo or cross-remote delivery is
   preflighted but reported as non-atomic.
+- If one ref advances after preflight, an atomic group rejects every ref and
+  reports every branch as failed with `fetch_and_replan`.
 - Every branch receipt includes push status and a merge plan with target,
   strategy, dependency order, verification evidence, and conflict risk.
 - Unresolved checkpoints, failed checks, stale recorded verification, dirty

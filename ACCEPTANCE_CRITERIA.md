@@ -44,10 +44,10 @@ values and machine-independent structural limits are included in the report.
 
 ## Supported scope
 
-The acceptance catalog covers ordinary non-bare Git worktrees, partial staging,
-untracked and ignored files, branches, multiple worktrees, multiple repositories,
-local and GitHub remotes, hooks, concurrent remote changes, rebase, conflict and
-push rejection paths.
+The acceptance catalog covers unborn and ordinary non-bare Git worktrees, root
+commits, partial staging, untracked and ignored files, branches, multiple
+worktrees, multiple repositories, local and GitHub remotes, hooks, concurrent
+remote changes, atomic group rejection, rebase, conflict and push rejection paths.
 
 Git LFS object transport, server administration, authentication recovery,
 platform-specific case-collision behavior, and mutation of submodule contents by

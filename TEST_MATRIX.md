@@ -10,6 +10,8 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 |---|---|
 | First use without configuration | Block without mutation and suggest a root under `CODEX_HOME` |
 | User-selected ledger root | Persist once, reuse automatically, and require explicit replacement |
+| Unborn branch lifecycle | Park, restore, promote an exact-path root commit, verify, and ship |
+| Unborn pre-existing path | Refuse to claim files already present when the thread begins |
 | First mutation | Create one baseline ledger entry and private ref |
 | Repeated begin | Return the original baseline without overwriting it |
 | Detached HEAD | Block before creating a ledger entry |
@@ -53,6 +55,7 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 | Untouched local branch | Exclude it from the ship set |
 | Already-pushed thread branch | Exclude it from later ship sets |
 | Multiple branches, one remote | Push with one atomic group |
+| One atomic ref advances after preflight | Reject every ref and mark every branch failed |
 | Multiple repos/remotes | Preflight separately and report non-atomic delivery |
 | Cross-repo second push fails | Preserve the first success and report the rejected group as failed |
 | Remote advances after preflight | Reject the stale push and return `fetch_and_replan` |

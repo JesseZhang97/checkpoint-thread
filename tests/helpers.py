@@ -51,6 +51,14 @@ def init_repo(path: Path, *, initial_branch: str = "main") -> Path:
     return path
 
 
+def init_unborn_repo(path: Path, *, initial_branch: str = "main") -> Path:
+    path.mkdir(parents=True)
+    run(["git", "init", "-q", "-b", initial_branch], cwd=path)
+    git(path, "config", "user.name", "Checkpoint Test")
+    git(path, "config", "user.email", "checkpoint@example.test")
+    return path
+
+
 def clone_repo(remote: Path, path: Path, *, branch: str = "main") -> Path:
     run(["git", "clone", "-q", "-b", branch, str(remote), str(path)])
     git(path, "config", "user.name", "Checkpoint Test")

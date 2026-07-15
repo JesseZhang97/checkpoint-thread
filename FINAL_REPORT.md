@@ -2,28 +2,29 @@
 
 ## Outcome
 
-The workflow passes the quantified acceptance model. It covers 78 of 80 cataloged
-scenarios and 99.38% of weighted risk. All P0 and P1 scenarios are covered; the
-two remaining gaps are documented P2 edges with conservative behavior.
+The workflow passes the quantified acceptance model. All 80 cataloged scenarios
+are covered, including the unborn-branch lifecycle and an atomic multi-ref race.
 
 | Gate | Required | Observed | Result |
 |---|---:|---:|---|
-| Weighted scenario coverage | >= 90% | 99.38% | Pass |
+| Weighted scenario coverage | >= 90% | 100% | Pass |
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
-| Lowest domain coverage | >= 80% | 96.77% | Pass |
-| Negative executable cases | >= 35% | 56.16% | Pass |
+| Lowest domain coverage | >= 80% | 100% | Pass |
+| Negative executable cases | >= 35% | 56% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 48/48 | Pass |
-| `SKILL.md` lines | <= 100 | 96 | Pass |
-| `SKILL.md` words | <= 700 | 663 | Pass |
+| Local test suite | All pass | 52/52 | Pass |
+| `SKILL.md` lines | <= 100 | 94 | Pass |
+| `SKILL.md` words | <= 700 | 573 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 191.48 ms | Pass |
-| `begin` p95 | <= 750 ms | 448.35 ms | Pass |
+| `status` p95 | <= 250 ms | 177.34 ms | Pass |
+| `begin` p95 | <= 750 ms | 420.66 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
 `acceptance/scenarios.json`, and `acceptance/evidence/`.
+The lean-architecture and progressive-disclosure review is in
+`ARCHITECTURE_ASSESSMENT.md`.
 
 ## Operating Model
 
@@ -48,6 +49,8 @@ catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
 - Reject detached HEAD, non-repository paths, and corrupt ledger state.
 - Do not silently claim dirty pre-thread paths, pre-thread commits, merely visited
   branches, or commits from another thread.
+- Support repositories without an initial commit through park, restore,
+  exact-path root promotion, verification, and first push.
 
 ### Goal checkpoints
 
@@ -109,6 +112,8 @@ catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
 - Block dirty worktrees, unresolved checkpoints, unowned commits, missing/stale/
   failed verification, missing branches, remote ambiguity, and fetch failure.
 - Push multiple branches to one remote using Git atomic push.
+- Reject an entire atomic group when one ref advances after preflight, and mark
+  every branch failed without partial publication.
 - Preflight multiple repositories/remotes, report non-atomic delivery, and retain
   completed branch receipts when a later remote fails.
 - Never force-push and never publish private checkpoint refs.
@@ -145,13 +150,7 @@ published and that the final clean-divergence tip matched GitHub.
 
 ## Remaining Scope
 
-Two rare P2 cases remain outside executable coverage:
-
-1. A full checkpoint lifecycle on an unborn branch. The workflow currently
-   blocks conservatively until an initial commit exists.
-2. A server-side race during a multi-ref atomic push. Single-branch late-race
-   rejection and successful atomic multi-ref delivery are covered; Git atomic
-   semantics protect the group if the server rejects one ref.
+The checked-in acceptance catalog has no remaining coverage gaps.
 
 Git LFS object transport, server administration, authentication recovery,
 platform-specific case-collision behavior, and parent-repository mutation of
@@ -168,6 +167,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 48-test disposable-repository suite, resolves every catalog
+The verifier runs the 52-test disposable-repository suite, resolves every catalog
 evidence pointer, measures the hot paths, validates the lean-skill limits, and
 exits nonzero when any acceptance gate fails.

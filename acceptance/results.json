@@ -1,72 +1,72 @@
 {
-  "accepted": true,
+  "accepted": false,
   "benchmark": {
-    "begin_p50_ms": 410.43,
-    "begin_p95_ms": 448.35,
+    "begin_p50_ms": 791.66,
+    "begin_p95_ms": 884.47,
     "begin_samples": 10,
-    "status_p50_ms": 175.8,
-    "status_p95_ms": 191.48,
+    "status_p50_ms": 384.79,
+    "status_p95_ms": 605.1,
     "status_samples": 20
   },
   "coverage_by_domain": {
-    "delivery": 0.9917,
+    "delivery": 1.0,
     "goal_boundary": 1.0,
-    "invocation": 0.9677,
+    "invocation": 1.0,
     "promotion": 1.0,
     "recovery": 1.0,
-    "reporting_efficiency": 1.0,
+    "reporting_efficiency": 0.7778,
     "topology": 1.0
   },
   "coverage_by_priority": {
     "P0": 1.0,
-    "P1": 1.0,
-    "P2": 0.8
+    "P1": 0.9048,
+    "P2": 1.0
   },
   "covered_scenario_count": 78,
   "gaps": [
     {
-      "id": "INV-07",
-      "name": "Unborn branch checkpoint lifecycle",
-      "priority": "P2",
-      "rationale": "Rare repository bootstrap edge; park already blocks conservatively and normal initialized repos are covered."
+      "id": "REP-06",
+      "name": "Status hot path remains within p95 budget",
+      "priority": "P1",
+      "rationale": null
     },
     {
-      "id": "DEL-26",
-      "name": "Atomic group race rejects every ref in the group",
-      "priority": "P2",
-      "rationale": "Single-branch late race and atomic success are covered; the combined server race is retained as a rare edge."
+      "id": "REP-07",
+      "name": "Begin mutation path remains within p95 budget",
+      "priority": "P1",
+      "rationale": null
     }
   ],
   "gates": {
-    "begin_p95": true,
+    "begin_p95": false,
     "conditional_references": true,
     "evidence_resolves": true,
     "negative_case_ratio": true,
     "overall_weighted_coverage": true,
     "p0_coverage": true,
-    "p1_coverage": true,
-    "per_domain_coverage": true,
+    "p1_coverage": false,
+    "per_domain_coverage": false,
     "real_remote_scenarios": true,
     "skill_lines": true,
     "skill_words": true,
-    "status_p95": true,
+    "status_p95": false,
     "tests_pass": true
   },
   "lean_skill": {
     "conditional_references": 4,
-    "lines": 96,
-    "words": 663
+    "lines": 94,
+    "words": 573
   },
-  "negative_executable_ratio": 0.5616,
+  "negative_executable_ratio": 0.56,
   "real_remote_scenario_count": 5,
   "remote_run_id": "20260715040846-a8ab38",
   "scenario_count": 80,
   "tests": {
-    "count": 48,
+    "count": 52,
     "passed": true,
-    "seconds": 71.769,
-    "summary": "----------------------------------------------------------------------\nRan 48 tests in 71.699s\n\nOK"
+    "seconds": 106.52,
+    "summary": "----------------------------------------------------------------------\nRan 52 tests in 106.449s\n\nOK"
   },
   "validation_errors": [],
-  "weighted_coverage": 0.9938
+  "weighted_coverage": 0.9816
 }

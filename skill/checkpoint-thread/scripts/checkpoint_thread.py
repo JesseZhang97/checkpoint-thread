@@ -634,10 +634,7 @@ def remove_untracked_path(root: Path, relative: str) -> None:
 def command_park(args: argparse.Namespace) -> dict[str, Any]:
     root = repo_root(args.repo)
     branch = current_branch(root)
-    if head_sha(root) is None:
-        raise CheckpointError(
-            "unborn_branch_cannot_park", repo=str(root), branch=branch
-        )
+    current_head = head_sha(root)
     original_changes = ensure_clean_operation_state(root)
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
@@ -658,23 +655,32 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
                 ref=checkpoint["ref"],
                 excluded=checkpoint["excluded"],
             )
-        restored = git(
-            root,
-            "restore",
-            "--source=HEAD",
-            "--staged",
-            "--worktree",
-            "--",
-            ".",
-            check=False,
-        )
-        if restored.returncode != 0:
-            raise CheckpointError(
-                "park_restore_head_failed",
-                ref=checkpoint["ref"],
-                stderr=restored.stderr.decode("utf-8", "replace").strip(),
+        if current_head is None:
+            git(root, "read-tree", "--empty")
+            paths_to_remove = sorted(
+                set(original_changes["staged"])
+                | set(original_changes["unstaged"])
+                | set(original_changes["untracked"])
             )
-        for relative in original_changes["untracked"]:
+        else:
+            restored = git(
+                root,
+                "restore",
+                "--source=HEAD",
+                "--staged",
+                "--worktree",
+                "--",
+                ".",
+                check=False,
+            )
+            if restored.returncode != 0:
+                raise CheckpointError(
+                    "park_restore_head_failed",
+                    ref=checkpoint["ref"],
+                    stderr=restored.stderr.decode("utf-8", "replace").strip(),
+                )
+            paths_to_remove = original_changes["untracked"]
+        for relative in paths_to_remove:
             remove_untracked_path(root, relative)
         remaining = collect_changes(root)
         if remaining["staged"] or remaining["unstaged"] or remaining["untracked"]:
@@ -728,17 +734,28 @@ def command_restore(args: argparse.Namespace) -> dict[str, Any]:
                 saved_head=checkpoint["head"],
                 current_head=current_head,
             )
-        assert current_head is not None
-        restore_paths = nul_paths(
-            git(
-                root,
-                "diff",
-                "--name-only",
-                "-z",
-                current_head,
-                checkpoint["worktree_commit"],
+        if current_head is None:
+            restore_paths = nul_paths(
+                git(
+                    root,
+                    "ls-tree",
+                    "-r",
+                    "--name-only",
+                    "-z",
+                    checkpoint["worktree_commit"],
+                )
             )
-        )
+        else:
+            restore_paths = nul_paths(
+                git(
+                    root,
+                    "diff",
+                    "--name-only",
+                    "-z",
+                    current_head,
+                    checkpoint["worktree_commit"],
+                )
+            )
         if restore_paths:
             worktree_restore = git(
                 root,
@@ -852,14 +869,29 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
         ]
         if intent_paths:
             git_add_paths(root, intent_paths, intent_to_add=True)
-        diff_check = git(root, "diff", "--check", "HEAD", "--", *selected, check=False)
-        if diff_check.returncode != 0:
+        if head_sha(root) is None:
+            diff_check_commands = [
+                ("diff", "--cached", "--check", "--", *selected),
+                ("diff", "--check", "--", *selected),
+            ]
+        else:
+            diff_check_commands = [("diff", "--check", "HEAD", "--", *selected)]
+        diff_checks = [
+            git(root, *command, check=False) for command in diff_check_commands
+        ]
+        failed_diff_checks = [
+            result for result in diff_checks if result.returncode != 0
+        ]
+        if failed_diff_checks:
             if intent_paths:
                 git(root, "reset", "-q", "--", *intent_paths, check=False)
             save_ledger(args.ledger_root, args.ledger_id, ledger)
             raise CheckpointError(
                 "diff_check_failed",
-                details=diff_check.stdout.decode("utf-8", "replace").strip(),
+                details="\n".join(
+                    result.stdout.decode("utf-8", "replace").strip()
+                    for result in failed_diff_checks
+                ),
                 checkpoint_ref=checkpoint["ref"],
             )
         commit = git(
