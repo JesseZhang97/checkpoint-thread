@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -203,6 +204,110 @@ class PromotionTests(unittest.TestCase):
         )
 
         self.assertEqual("selected_path_preexisting", result["error"])
+
+    def test_promote_handles_spaces_leading_dash_and_safe_env_template(self) -> None:
+        (self.repo / "dir").mkdir()
+        (self.repo / "dir" / "file with space.txt").write_text(
+            "space\n", encoding="utf-8"
+        )
+        (self.repo / "-leading.txt").write_text("dash\n", encoding="utf-8")
+        (self.repo / ".env.example").write_text("TOKEN=replace-me\n", encoding="utf-8")
+
+        result = run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "dir/file with space.txt",
+            "--path=-leading.txt",
+            "--path",
+            ".env.example",
+            "--message",
+            "test: add unusual safe paths",
+            "--acceptance-source",
+            "objective",
+        )
+
+        self.assertEqual(
+            {"-leading.txt", ".env.example", "dir/file with space.txt"},
+            set(result["paths"]),
+        )
+        committed = set(
+            git(
+                self.repo, "show", "--pretty=", "--name-only", "HEAD"
+            ).stdout.splitlines()
+        )
+        self.assertEqual(set(result["paths"]), committed)
+
+    def test_promote_resolves_the_source_provisional_checkpoint(self) -> None:
+        (self.repo / "provisional.txt").write_text("draft\n", encoding="utf-8")
+        provisional = run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "snapshot",
+            self.repo,
+            "--kind",
+            "provisional",
+            "--reason",
+            "implicit goal progression",
+        )
+        (self.repo / "provisional.txt").write_text("accepted\n", encoding="utf-8")
+
+        promoted = run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "provisional.txt",
+            "--checkpoint-ref",
+            provisional["ref"],
+            "--message",
+            "feat: accept provisional work",
+            "--acceptance-source",
+            "explicit",
+        )
+
+        ledger = json.loads(
+            (self.ledgers / self.ledger_id / "ledger.json").read_text(encoding="utf-8")
+        )
+        branch = next(iter(ledger["repos"].values()))["branches"]["main"]
+        source = next(
+            item for item in branch["checkpoints"] if item["ref"] == provisional["ref"]
+        )
+        self.assertEqual("promoted", source["resolution"])
+        self.assertEqual(promoted["commit"], source["resolved_commit"])
+
+    def test_promote_commits_a_staged_rename_pair_atomically(self) -> None:
+        repo = init_repo(self.root / "rename-repo")
+        (repo / "old-name.txt").write_text("rename\n", encoding="utf-8")
+        git(repo, "add", "old-name.txt")
+        git(repo, "commit", "-qm", "test: seed rename source")
+        ledger_id = "rename-thread"
+        run_cli(self.ledgers, ledger_id, "begin", repo, "--merge-target", "main")
+        git(repo, "mv", "old-name.txt", "new-name.txt")
+
+        result = run_cli(
+            self.ledgers,
+            ledger_id,
+            "promote",
+            repo,
+            "--path",
+            "old-name.txt",
+            "--path",
+            "new-name.txt",
+            "--message",
+            "refactor: rename tracked file",
+            "--acceptance-source",
+            "objective",
+        )
+
+        self.assertEqual({"old-name.txt", "new-name.txt"}, set(result["paths"]))
+        names = git(repo, "show", "--pretty=", "--name-status", "HEAD").stdout
+        self.assertIn("old-name.txt", names)
+        self.assertIn("new-name.txt", names)
+        self.assertTrue(names.startswith("R"))
 
 
 if __name__ == "__main__":

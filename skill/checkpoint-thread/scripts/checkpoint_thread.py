@@ -146,12 +146,6 @@ def upstream_name(root: Path, branch: str) -> str | None:
     return text(result) if result.returncode == 0 else None
 
 
-def git_path(root: Path, name: str) -> Path:
-    value = text(git(root, "rev-parse", "--git-path", name))
-    path = Path(value)
-    return (root / path).resolve() if not path.is_absolute() else path.resolve()
-
-
 def operation_state(root: Path) -> str | None:
     checks = [
         ("MERGE_HEAD", "merge"),
@@ -160,8 +154,14 @@ def operation_state(root: Path) -> str | None:
         ("rebase-merge", "rebase"),
         ("rebase-apply", "rebase"),
     ]
-    for path_name, operation in checks:
-        if git_path(root, path_name).exists():
+    command = ["rev-parse"]
+    for path_name, _ in checks:
+        command.extend(["--git-path", path_name])
+    resolved = text(git(root, *command)).splitlines()
+    for (_, operation), value in zip(checks, resolved, strict=True):
+        path = Path(value)
+        path = (root / path).resolve() if not path.is_absolute() else path.resolve()
+        if path.exists():
             return operation
     return None
 
@@ -732,7 +732,14 @@ def normalize_selected_paths(root: Path, paths: Sequence[str]) -> list[str]:
         relative = pure.as_posix()
         exists = (root / relative).exists() or (root / relative).is_symlink()
         tracked = git(root, "ls-files", "--error-unmatch", "--", relative, check=False)
-        if not exists and tracked.returncode != 0:
+        tracked_in_head = git(
+            root,
+            "cat-file",
+            "-e",
+            f"HEAD:{relative}",
+            check=False,
+        )
+        if not exists and tracked.returncode != 0 and tracked_in_head.returncode != 0:
             raise CheckpointError("path_not_found", path=relative)
         normalized.append(relative)
     return sorted(set(normalized))
@@ -747,7 +754,11 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
     all_changes = (
         set(changes["staged"]) | set(changes["unstaged"]) | set(changes["untracked"])
     )
-    unchanged = sorted(selected_set - all_changes)
+    unchanged = sorted(
+        path
+        for path in selected_set - all_changes
+        if git(root, "diff", "--quiet", "HEAD", "--", path, check=False).returncode == 0
+    )
     if unchanged:
         raise CheckpointError("selected_paths_unchanged", paths=unchanged)
     overlap = sorted(selected_set & set(changes["index_worktree_overlap"]))
@@ -1008,6 +1019,35 @@ def infer_branch_dependencies(
     return sorted(dependencies)
 
 
+def effective_verifications(history: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    order: list[tuple[str, str]] = []
+    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in history:
+        key = (record["command"], record["scope"])
+        if key not in latest:
+            order.append(key)
+        latest[key] = record
+    return [latest[key] for key in order]
+
+
+def primary_blocker(blockers: Sequence[str]) -> str:
+    priority = [
+        "rebase_onto_upstream_then_resolve",
+        "separate_or_confirm_local_commits",
+        "promote_or_exclude_unresolved_checkpoints",
+        "checkpoint_or_clean_worktree",
+        "fix_and_rerun_verification",
+        "rerun_stale_verification",
+        "configure_upstream",
+        "record_verification_or_not_applicable",
+        "rebase_onto_upstream",
+    ]
+    for candidate in priority:
+        if candidate in blockers:
+            return candidate
+    return blockers[0]
+
+
 def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
     fetched: set[tuple[str, str]] = set()
     branches: list[dict[str, Any]] = []
@@ -1030,6 +1070,8 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                         "branch": branch,
                         "push_status": "blocked",
                         "remote_state": "missing_local_branch",
+                        "divergence_solution": "restore_or_remove_branch_from_ledger",
+                        "blockers": ["restore_or_remove_branch_from_ledger"],
                     }
                 )
                 continue
@@ -1114,13 +1156,13 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     remote_state = "up_to_date"
                     push_status = "ready"
                     solution = "none"
+            blockers = [solution] if push_status == "blocked" else []
             if unowned_local_commits:
                 ownership_status = "unowned_local_commits"
             if not unresolved and not unpublished_thread_commits:
                 continue
             if ownership_status == "unowned_local_commits":
-                push_status = "blocked"
-                solution = "separate_or_confirm_local_commits"
+                blockers.append("separate_or_confirm_local_commits")
             worktree = branch_worktree(root, branch)
             worktree_dirty = False
             if worktree is not None:
@@ -1133,26 +1175,30 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     or operation_state(worktree) is not None
                 )
             if unresolved:
-                push_status = "blocked"
-                solution = "promote_or_exclude_unresolved_checkpoints"
+                blockers.append("promote_or_exclude_unresolved_checkpoints")
             elif worktree_dirty:
-                push_status = "blocked"
-                solution = "checkpoint_or_clean_worktree"
+                blockers.append("checkpoint_or_clean_worktree")
+            verification = effective_verifications(entry["verification"])
             verification_failed = any(
-                item["status"] == "failed" for item in entry["verification"]
+                item["status"] == "failed" for item in verification
             )
             stale_verification = [
                 item
-                for item in entry["verification"]
-                if item["status"] in {"passed", "not_applicable"}
-                and item.get("head") != local_tip
+                for item in verification
+                if item["status"] == "passed" and item.get("head") != local_tip
             ]
             if verification_failed:
-                push_status = "blocked"
-                solution = "fix_and_rerun_verification"
+                blockers.append("fix_and_rerun_verification")
             elif stale_verification:
+                blockers.append("rerun_stale_verification")
+            elif not verification:
+                blockers.append("record_verification_or_not_applicable")
+            blockers = list(dict.fromkeys(blockers))
+            if blockers:
                 push_status = "blocked"
-                solution = "rerun_stale_verification"
+                solution = primary_blocker(blockers)
+            else:
+                push_status = "ready"
             target = entry.get("merge_target") or infer_merge_target(root, remote)
             commit_count = len(entry["thread_commits"])
             merge_strategy = "rebase_and_merge" if commit_count else "none"
@@ -1176,11 +1222,13 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     "behind": behind,
                     "push_status": push_status,
                     "divergence_solution": solution,
+                    "blockers": blockers,
                     "ownership_status": ownership_status,
                     "unowned_local_commits": unowned_local_commits,
                     "unresolved_checkpoints": unresolved,
                     "worktree_dirty": worktree_dirty,
-                    "verification": entry["verification"],
+                    "verification": verification,
+                    "verification_history": entry["verification"],
                     "stale_verification": stale_verification,
                     "conflict_paths": conflict_paths,
                     "thread_commits": [
@@ -1193,7 +1241,7 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                         "strategy": merge_strategy,
                         "depends_on": dependencies,
                         "pre_merge_action": solution,
-                        "post_merge_verification": entry["verification"],
+                        "post_merge_verification": verification,
                         "conflict_risk": conflict_risk,
                     },
                 }
@@ -1212,8 +1260,9 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
             "branches": [item["branch"] for item in items],
             "atomic": len(items) > 1,
         }
-        for (repo_id, remote), items in sorted(grouped.items())
+        for (repo_id, remote), items in grouped.items()
     ]
+    push_groups.sort(key=lambda item: (item["repo"], item["remote"]))
     return {
         "ok": True,
         "ledger_id": ledger["ledger_id"],
@@ -1362,6 +1411,7 @@ def prepare_rebases(
             branch["remote_state"] == "diverged"
             and branch["ownership_status"] == "thread_owned"
             and not branch["conflict_paths"]
+            and branch["blockers"] == ["rebase_onto_upstream"]
         ):
             key = (branch["repo_id"], branch["branch"])
             receipts[key] = rebase_thread_owned_branch(ledger, ledger_id, branch)
@@ -1408,17 +1458,34 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
             command.extend([group["remote"], *refspecs])
             pushed = git(root, *command, check=False)
             if pushed.returncode != 0:
+                for branch in group["branches"]:
+                    failed_branch = by_key[(group["repo_id"], branch)]
+                    failed_branch["push_status"] = "failed"
+                    failed_branch["divergence_solution"] = "fetch_and_replan"
+                    failed_branch["blockers"] = ["fetch_and_replan"]
+                    failed_branch["merge_plan"]["pre_merge_action"] = "fetch_and_replan"
+                failure = {
+                    "at": now_iso(),
+                    "remote": group["remote"],
+                    "branches": group["branches"],
+                    "atomic": group["atomic"],
+                    "completed": [
+                        item
+                        for item in plan["branches"]
+                        if item["push_status"] == "pushed"
+                    ],
+                }
+                ledger["last_ship_failure"] = failure
+                save_ledger(args.ledger_root, args.ledger_id, ledger)
                 raise CheckpointError(
                     "push_failed",
                     repo=str(root),
                     remote=group["remote"],
                     branches=group["branches"],
                     stderr=pushed.stderr.decode("utf-8", "replace").strip(),
-                    completed=[
-                        item
-                        for item in plan["branches"]
-                        if item["push_status"] == "pushed"
-                    ],
+                    atomic=group["atomic"],
+                    completed=failure["completed"],
+                    branches_report=plan["branches"],
                 )
             for branch in group["branches"]:
                 by_key[(group["repo_id"], branch)]["push_status"] = "pushed"

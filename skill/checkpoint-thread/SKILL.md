@@ -15,6 +15,8 @@ Resolve one `LEDGER_ID` per Codex thread. Prefer the surfaced task/thread id;
 otherwise generate one once and retain it in context. Ledgers default to
 `/Users/daydreamer/Developer/.codex-ledgers/checkpoint-thread/active`.
 
+Read-only threads create nothing. Active same-goal continuation makes no CLI call.
+
 Before the first persistent repository change, run:
 
 ```bash
