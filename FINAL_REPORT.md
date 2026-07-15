@@ -2,24 +2,24 @@
 
 ## Outcome
 
-The workflow passes the quantified acceptance model. It covers 76 of 78 cataloged
-scenarios and 99.37% of weighted risk. All P0 and P1 scenarios are covered; the
+The workflow passes the quantified acceptance model. It covers 78 of 80 cataloged
+scenarios and 99.38% of weighted risk. All P0 and P1 scenarios are covered; the
 two remaining gaps are documented P2 edges with conservative behavior.
 
 | Gate | Required | Observed | Result |
 |---|---:|---:|---|
-| Weighted scenario coverage | >= 90% | 99.37% | Pass |
+| Weighted scenario coverage | >= 90% | 99.38% | Pass |
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
-| Lowest domain coverage | >= 80% | 96% | Pass |
-| Negative executable cases | >= 35% | 56.34% | Pass |
+| Lowest domain coverage | >= 80% | 96.77% | Pass |
+| Negative executable cases | >= 35% | 56.16% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 46/46 | Pass |
-| `SKILL.md` lines | <= 100 | 90 | Pass |
-| `SKILL.md` words | <= 700 | 621 | Pass |
+| Local test suite | All pass | 48/48 | Pass |
+| `SKILL.md` lines | <= 100 | 96 | Pass |
+| `SKILL.md` words | <= 700 | 663 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 181.14 ms | Pass |
-| `begin` p95 | <= 750 ms | 420.23 ms | Pass |
+| `status` p95 | <= 250 ms | 191.48 ms | Pass |
+| `begin` p95 | <= 750 ms | 448.35 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -31,6 +31,8 @@ catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
 - A goal boundary, not a turn, is the checkpoint cadence.
 - A branch is a delivery lane; one thread may own work on several lanes.
 - `begin` is lazy and idempotent before the first persistent repository change.
+- The user selects the ledger root once on first mutation; the recommended
+  default is under `CODEX_HOME`, and later tasks reuse the saved choice.
 - Read-only threads create no ledger or ref; same-goal continuation invokes no
   checkpoint command.
 - The model decides `continuation`, `new_goal`, or `ambiguous` semantically. The
@@ -166,6 +168,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 46-test disposable-repository suite, resolves every catalog
+The verifier runs the 48-test disposable-repository suite, resolves every catalog
 evidence pointer, measures the hot paths, validates the lean-skill limits, and
 exits nonzero when any acceptance gate fails.

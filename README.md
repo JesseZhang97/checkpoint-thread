@@ -30,6 +30,14 @@ npx skills update checkpoint-thread --global --yes
 仓库贡献者也可以从仓库根目录执行 `npx skills add . --list`，验证 CLI 能发现
 `skill/checkpoint-thread`。
 
+第一次需要修改仓库时，skill 会让你确认 ledger 保存位置。推荐值是：
+
+```text
+${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active
+```
+
+确认后只配置一次；只读分析不会触发配置。后续 task 自动复用该位置。
+
 ## 日常怎么用
 
 安装并启用 skill 后，正常描述开发任务即可，不需要每次手动执行 `begin`：
@@ -110,11 +118,17 @@ python3 skill/checkpoint-thread/scripts/checkpoint_thread.py \
   --ledger-id <task-id> --help
 ```
 
-默认 ledger 位于：
+手动完成首次配置：
 
-```text
-/Users/daydreamer/Developer/.codex-ledgers/checkpoint-thread/active
+```bash
+python3 skill/checkpoint-thread/scripts/checkpoint_thread.py \
+  --ledger-root "${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active" \
+  configure
 ```
+
+选择结果保存在
+`${CODEX_HOME:-$HOME/.codex}/checkpoint-thread/config.json`。修改已有选择需要用户确认，
+并显式追加 `configure --replace`；单次命令仍可使用 `--ledger-root` 覆盖。
 
 设计与验收细节见 `SPEC.md`、`ACCEPTANCE_CRITERIA.md` 和
 `FINAL_REPORT.md`。运行完整验收：

@@ -22,8 +22,10 @@ stays within one concern until evidence supports a boundary.
 
 ## Git and ledger invariants
 
-- The ledger lives outside business repos under
-  `/Users/daydreamer/Developer/.codex-ledgers/checkpoint-thread/active` by default.
+- On first mutation after installation, the user chooses the ledger root once.
+  The recommended default is
+  `${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active`; the persisted
+  choice remains outside business repositories.
 - Recovery refs live under `refs/codex/checkpoint-thread/` and are never pushed.
 - A snapshot preserves HEAD, index, worktree, partial staging, and allowed
   untracked files without changing the user's index or worktree.

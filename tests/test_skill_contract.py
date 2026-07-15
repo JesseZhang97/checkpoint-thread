@@ -26,6 +26,11 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("implicit progression", content)
         self.assertIn("Read-only threads create nothing", content)
         self.assertIn("same-goal continuation makes no CLI call", content)
+        self.assertIn("ask the user once", content)
+        self.assertIn(
+            "${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active", content
+        )
+        self.assertIn("configure --replace", content)
         for reference in [
             "ship.md",
             "safety-snapshot.md",

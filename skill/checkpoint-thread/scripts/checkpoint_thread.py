@@ -15,9 +15,6 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Iterator, Sequence
 
 
-DEFAULT_LEDGER_ROOT = Path(
-    "/Users/daydreamer/Developer/.codex-ledgers/checkpoint-thread/active"
-)
 DEFAULT_LARGE_FILE_LIMIT = 25 * 1024 * 1024
 SECRET_BASENAMES = {
     ".env",
@@ -53,6 +50,19 @@ def now_iso() -> str:
 def emit(payload: dict[str, Any], code: int = 0) -> int:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2))
     return code
+
+
+def codex_home() -> Path:
+    configured = os.environ.get("CODEX_HOME")
+    return Path(configured).expanduser() if configured else Path.home() / ".codex"
+
+
+def configuration_path() -> Path:
+    return codex_home() / "checkpoint-thread" / "config.json"
+
+
+def suggested_ledger_root() -> Path:
+    return codex_home() / "ledgers" / "checkpoint-thread" / "active"
 
 
 def run(
@@ -255,6 +265,42 @@ def worktree_id_for(root: Path) -> str:
 
 def ledger_path(root: Path, ledger_id: str) -> Path:
     return root / safe_component(ledger_id) / "ledger.json"
+
+
+def load_configuration() -> dict[str, Any] | None:
+    path = configuration_path()
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise CheckpointError(
+            "configuration_unreadable", path=str(path), detail=str(error)
+        ) from error
+    if payload.get("version") != 1 or not isinstance(payload.get("ledger_root"), str):
+        raise CheckpointError("configuration_invalid", path=str(path))
+    return payload
+
+
+def save_configuration(ledger_root: Path) -> None:
+    path = configuration_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": 1,
+        "ledger_root": str(ledger_root),
+        "updated_at": now_iso(),
+    }
+    fd, temporary = tempfile.mkstemp(prefix="config-", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, sort_keys=True, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 @contextlib.contextmanager
@@ -1529,15 +1575,64 @@ def command_ledger_status(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_configure(args: argparse.Namespace) -> dict[str, Any]:
+    if args.ledger_root is None:
+        raise CheckpointError(
+            "ledger_root_required",
+            suggested_ledger_root=str(suggested_ledger_root().resolve()),
+        )
+    ledger_root = args.ledger_root.expanduser().resolve()
+    existing = load_configuration()
+    if existing and Path(existing["ledger_root"]).resolve() != ledger_root:
+        if not args.replace:
+            raise CheckpointError(
+                "configuration_already_exists",
+                config_path=str(configuration_path()),
+                ledger_root=existing["ledger_root"],
+                requested_ledger_root=str(ledger_root),
+                solution="rerun_configure_with_replace_after_user_confirmation",
+            )
+    action = (
+        "unchanged"
+        if existing and existing["ledger_root"] == str(ledger_root)
+        else "configured"
+    )
+    save_configuration(ledger_root)
+    return {
+        "ok": True,
+        "action": action,
+        "config_path": str(configuration_path()),
+        "ledger_root": str(ledger_root),
+    }
+
+
+def resolve_ledger_root(value: Path | None) -> Path:
+    if value is not None:
+        return value.expanduser().resolve()
+    configuration = load_configuration()
+    if configuration is None:
+        raise CheckpointError(
+            "ledger_root_not_configured",
+            config_path=str(configuration_path()),
+            suggested_ledger_root=str(suggested_ledger_root().resolve()),
+            solution="ask_user_then_run_configure",
+        )
+    return Path(configuration["ledger_root"]).expanduser().resolve()
+
+
 def add_repo_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo", type=Path, required=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Deterministic Git checkpoint helper")
-    parser.add_argument("--ledger-root", type=Path, default=DEFAULT_LEDGER_ROOT)
-    parser.add_argument("--ledger-id", required=True)
+    parser.add_argument("--ledger-root", type=Path)
+    parser.add_argument("--ledger-id")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    configure = subparsers.add_parser("configure")
+    configure.add_argument("--replace", action="store_true")
+    configure.set_defaults(handler=command_configure)
 
     begin = subparsers.add_parser("begin")
     add_repo_argument(begin)
@@ -1624,10 +1719,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.ledger_root = args.ledger_root.expanduser().resolve()
-    if hasattr(args, "repo"):
-        args.repo = args.repo.expanduser().resolve()
     try:
+        if args.command != "configure":
+            if not args.ledger_id:
+                raise CheckpointError("ledger_id_required")
+            args.ledger_root = resolve_ledger_root(args.ledger_root)
+        if hasattr(args, "repo"):
+            args.repo = args.repo.expanduser().resolve()
         return emit(args.handler(args))
     except CheckpointError as error:
         return emit(error.payload, code=2)

@@ -12,8 +12,14 @@ ledger mutations; keep semantic goal judgment in the Parent Agent.
 ## Dispatch
 
 Resolve one `LEDGER_ID` per Codex thread. Prefer the surfaced task/thread id;
-otherwise generate one once and retain it in context. Ledgers default to
-`/Users/daydreamer/Developer/.codex-ledgers/checkpoint-thread/active`.
+otherwise generate one once and retain it in context.
+
+Before the first repository mutation after installation, ask the user once to
+choose the ledger root. Recommend
+`${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active`, then persist the
+answer by running the CLI with `--ledger-root "$LEDGER_ROOT" configure`. Later
+commands use that saved choice. Change it with `configure --replace` only after
+explicit user confirmation.
 
 Read-only threads create nothing. Active same-goal continuation makes no CLI call.
 

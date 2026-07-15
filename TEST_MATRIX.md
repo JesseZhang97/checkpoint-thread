@@ -8,6 +8,8 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 
 | Scenario | Expected behavior |
 |---|---|
+| First use without configuration | Block without mutation and suggest a root under `CODEX_HOME` |
+| User-selected ledger root | Persist once, reuse automatically, and require explicit replacement |
 | First mutation | Create one baseline ledger entry and private ref |
 | Repeated begin | Return the original baseline without overwriting it |
 | Detached HEAD | Block before creating a ledger entry |

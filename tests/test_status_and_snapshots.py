@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import git, init_repo, ref_exists, run_cli
+from helpers import CLI, git, init_repo, ref_exists, run, run_cli
 
 
 class StatusAndSnapshotTests(unittest.TestCase):
@@ -44,6 +46,85 @@ class StatusAndSnapshotTests(unittest.TestCase):
             "refs/codex/checkpoint-thread/",
         ).stdout
         self.assertEqual("", refs)
+
+    def test_first_use_requests_a_user_selected_root_under_codex_home(self) -> None:
+        codex_home = self.root / "codex-home"
+        result = run(
+            [
+                sys.executable,
+                CLI,
+                "--ledger-id",
+                self.ledger_id,
+                "status",
+                "--repo",
+                self.repo,
+            ],
+            check=False,
+            env={"CODEX_HOME": str(codex_home)},
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(2, result.returncode)
+        self.assertEqual("ledger_root_not_configured", payload["error"])
+        self.assertEqual(
+            str((codex_home / "ledgers" / "checkpoint-thread" / "active").resolve()),
+            payload["suggested_ledger_root"],
+        )
+        self.assertFalse(codex_home.exists())
+
+    def test_configured_ledger_root_is_reused_and_replacement_is_explicit(
+        self,
+    ) -> None:
+        codex_home = self.root / "codex-home"
+        selected = self.root / "selected-ledgers"
+        environment = {"CODEX_HOME": str(codex_home)}
+
+        configured = run(
+            [sys.executable, CLI, "--ledger-root", selected, "configure"],
+            env=environment,
+        )
+        configured_payload = json.loads(configured.stdout)
+        self.assertEqual("configured", configured_payload["action"])
+        self.assertEqual(str(selected.resolve()), configured_payload["ledger_root"])
+
+        begun = run(
+            [
+                sys.executable,
+                CLI,
+                "--ledger-id",
+                self.ledger_id,
+                "begin",
+                "--repo",
+                self.repo,
+            ],
+            env=environment,
+        )
+        self.assertEqual("begun", json.loads(begun.stdout)["action"])
+        self.assertTrue((selected / self.ledger_id / "ledger.json").is_file())
+
+        replacement = self.root / "replacement-ledgers"
+        blocked = run(
+            [sys.executable, CLI, "--ledger-root", replacement, "configure"],
+            check=False,
+            env=environment,
+        )
+        self.assertEqual(2, blocked.returncode)
+        self.assertEqual(
+            "configuration_already_exists", json.loads(blocked.stdout)["error"]
+        )
+
+        replaced = run(
+            [
+                sys.executable,
+                CLI,
+                "--ledger-root",
+                replacement,
+                "configure",
+                "--replace",
+            ],
+            env=environment,
+        )
+        self.assertEqual("configured", json.loads(replaced.stdout)["action"])
 
     def test_status_reports_non_repo_and_corrupt_ledger_as_json_errors(self) -> None:
         non_repo = self.root / "not-a-repo"
