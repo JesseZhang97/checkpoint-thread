@@ -12,16 +12,16 @@ Hook scenarios pass.
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
 | Lowest domain coverage | >= 80% | 100% | Pass |
-| Negative executable cases | >= 35% | 56% | Pass |
+| Negative executable cases | >= 35% | 54.26% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
 | Local test suite | All pass | 72/72 | Pass |
-| `SKILL.md` lines | <= 100 | 98 | Pass |
+| `SKILL.md` lines | <= 100 | 99 | Pass |
 | `SKILL.md` words | <= 650 | 649 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 176.34 ms | Pass |
-| `begin` p95 | <= 750 ms | 403.68 ms | Pass |
-| `guard` p95 | <= 500 ms | 222.61 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 565.80 ms | Pass |
+| `status` p95 | <= 250 ms | 168.52 ms | Pass |
+| `begin` p95 | <= 750 ms | 407.16 ms | Pass |
+| `guard` p95 | <= 500 ms | 230.64 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 519.38 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -51,8 +51,9 @@ The lean-architecture and progressive-disclosure review is in
   operation.
 - Operation ids make completed calls replayable and expose interrupted calls to
   `inspect --check`.
-- A repo/branch has at most one active task claim. Park, successful ship, and a
-  clean no-op PostToolUse release it; dirty or unpublished work retains it.
+- A repo/branch has at most one active task claim. Explicit clean-local close,
+  park, successful ship, and a clean no-op PostToolUse release it; dirty work
+  retains it.
 - The Hook is synchronous and silent on allow. It is not a daemon or human file
   watcher.
 
@@ -155,7 +156,7 @@ The lean-architecture and progressive-disclosure review is in
 
 The private GitHub lab used separate `Thread Agent` and `Remote Collaborator`
 identities and uniquely named collaboration branches. Run
-`20260715040846-a8ab38` passed these scenarios:
+`20260715124710-5d331e` passed these scenarios:
 
 | Scenario | Observed result |
 |---|---|
@@ -166,7 +167,9 @@ identities and uniquely named collaboration branches. Run
 | Two branches, one remote | Both refs published in one atomic push group |
 
 The run also proves that private `refs/codex/checkpoint-thread/...` refs were not
-published and that the final clean-divergence tip matched GitHub.
+published and that the final clean-divergence tip matched GitHub. The temporary
+repository is private and archived after the run; deletion is pending the
+GitHub CLI `delete_repo` scope.
 
 ## Remaining Scope
 

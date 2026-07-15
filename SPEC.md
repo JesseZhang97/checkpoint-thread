@@ -31,8 +31,9 @@ stays within one concern until evidence supports a boundary.
   control-plane path, projection path, and event or operation id.
 - V1 JSON ledgers migrate lazily and atomically on first read.
 - Operation ids make completed calls replayable and incomplete calls diagnosable.
-- A `(repo common dir, branch)` claim has at most one task owner. `park` and
-  successful ship release it; PostToolUse releases only clean no-op ownership.
+- A `(repo common dir, branch)` claim has at most one task owner. Explicit
+  clean-local `close`, `park`, and successful ship release it; PostToolUse
+  releases only clean no-op ownership.
 - Non-config commands cannot override the configured ledger root.
 
 ## Git and recovery invariants

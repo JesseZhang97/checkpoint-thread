@@ -602,6 +602,7 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
         existing = repo_entry["branches"].get(branch)
         if existing is not None:
             claim = ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+            existing["state"] = "active"
             save_ledger(args.ledger_root, args.ledger_id, ledger)
             return {
                 "ok": True,
@@ -736,6 +737,8 @@ def command_guard(args: argparse.Namespace) -> dict[str, Any]:
     )
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
+        _, _, branch_entry = find_branch_entry(ledger, root, status["branch"])
+        branch_entry["state"] = "active"
         save_ledger(
             args.ledger_root,
             args.ledger_id,
@@ -775,7 +778,12 @@ def command_settle(args: argparse.Namespace) -> dict[str, Any]:
             else None
         )
         unpublished = bool(
-            latest_commit and latest_commit != branch_entry.get("last_shipped_commit")
+            latest_commit
+            and latest_commit
+            not in {
+                branch_entry.get("last_shipped_commit"),
+                branch_entry.get("last_released_commit"),
+            }
         )
         dirty = any(
             changes[key] for key in ("staged", "unstaged", "untracked", "unmerged")
@@ -815,6 +823,63 @@ def command_settle(args: argparse.Namespace) -> dict[str, Any]:
             "branch": branch,
             "blockers": blockers,
             "unresolved_checkpoints": unresolved,
+        }
+
+
+def command_close(args: argparse.Namespace) -> dict[str, Any]:
+    root = repo_root(args.repo)
+    branch = current_branch(root)
+    changes = ensure_clean_operation_state(root)
+    if any(changes[key] for key in ("staged", "unstaged", "untracked")):
+        raise CheckpointError("close_requires_clean_worktree", changes=changes)
+    with ledger_lock(args.ledger_root, args.ledger_id):
+        ledger = load_ledger(args.ledger_root, args.ledger_id)
+        repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
+        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+        unresolved = [
+            checkpoint["ref"]
+            for checkpoint in branch_entry["checkpoints"]
+            if checkpoint["kind"] != "baseline" and not checkpoint.get("resolution")
+        ]
+        if unresolved:
+            raise CheckpointError(
+                "close_blocked_by_unresolved_checkpoints",
+                checkpoints=unresolved,
+                solution="promote_or_resolve_checkpoints_then_close",
+            )
+        latest_commit = (
+            branch_entry["thread_commits"][-1]["commit"]
+            if branch_entry["thread_commits"]
+            else None
+        )
+        branch_entry["state"] = "closed_local"
+        branch_entry["last_released_commit"] = latest_commit
+        branch_entry["closed_at"] = now_iso()
+        branch_entry["close_reason"] = args.reason
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="close",
+            repo_id=repo_id,
+            branch=branch,
+            head=head_sha(root),
+            detail={"latest_commit": latest_commit, "reason": args.reason},
+        )
+        released = release_branch_claim(
+            args.ledger_root,
+            args.ledger_id,
+            repo_id,
+            branch,
+        )
+        return {
+            "ok": True,
+            "action": "closed_local",
+            "repo": str(root),
+            "repo_id": repo_id,
+            "branch": branch,
+            "latest_commit": latest_commit,
+            "claim_released": released,
         }
 
 
@@ -1757,6 +1822,21 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         plan = build_ship_plan(ledger, fetch=args.fetch)
+        newly_acquired: list[tuple[str, str]] = []
+        try:
+            for item in plan["branches"]:
+                claim = ensure_branch_claim(
+                    args.ledger_root,
+                    args.ledger_id,
+                    Path(item["repo"]),
+                    item["branch"],
+                )
+                if claim["action"] == "acquired":
+                    newly_acquired.append((item["repo_id"], item["branch"]))
+        except CheckpointError:
+            for repo_id, branch in newly_acquired:
+                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
+            raise
         rebase_receipts = prepare_rebases(ledger, args.ledger_id, plan)
         if rebase_receipts:
             save_ledger(args.ledger_root, args.ledger_id, ledger)
@@ -1772,6 +1852,8 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
             )
             item["push_mode"] = "not_started"
         if not plan["all_ready"]:
+            for repo_id, branch in newly_acquired:
+                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
             raise CheckpointError(
                 "ship_preflight_blocked",
                 branches=plan["branches"],
@@ -1841,9 +1923,9 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
         for item in plan["branches"]:
             if item["push_status"] == "pushed":
                 repo_entry = ledger["repos"][item["repo_id"]]
-                repo_entry["branches"][item["branch"]]["last_shipped_commit"] = item[
-                    "local_tip"
-                ]
+                branch_entry = repo_entry["branches"][item["branch"]]
+                branch_entry["last_shipped_commit"] = item["local_tip"]
+                branch_entry["state"] = "shipped"
         save_ledger(
             args.ledger_root,
             args.ledger_id,
@@ -2140,6 +2222,11 @@ def build_parser() -> argparse.ArgumentParser:
     settle = subparsers.add_parser("settle")
     add_repo_argument(settle)
     settle.set_defaults(handler=command_settle)
+
+    close = subparsers.add_parser("close")
+    add_repo_argument(close)
+    close.add_argument("--reason", required=True)
+    close.set_defaults(handler=command_close)
 
     status = subparsers.add_parser("status")
     add_repo_argument(status)

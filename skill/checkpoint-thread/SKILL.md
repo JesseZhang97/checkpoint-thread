@@ -1,12 +1,12 @@
 ---
 name: checkpoint-thread
-description: Automatically checkpoint Codex repo work before its first mutation and across branches. Use on every repo-mutating task; the hook enforces entry without explicit invocation, while the CLI ships only verified, thread-owned work.
+description: Automatically checkpoint Codex repo work before mutation across branches. Use on every repo-mutating task; the hook enforces entry without invocation, while the CLI ships verified thread-owned work.
 ---
 
 # Checkpoint Thread
 
-A thread is the scope, a goal boundary is the checkpoint cadence, and a branch is
-the delivery lane. The Parent Agent judges goals; the CLI owns deterministic Git,
+A thread is the scope; goal boundaries set cadence; branches are delivery lanes.
+The Parent Agent judges goals; the CLI owns deterministic Git,
 recovery, verification, and delivery mutations.
 
 ## Dispatch
@@ -41,11 +41,12 @@ from the agent; only the silent hook runs.
 | A distinct low-risk goal begins implicitly | `snapshot --kind provisional` |
 | Work pauses | `snapshot --kind safety` |
 | A dirty branch must be left | `park` |
+| Clean local-only task is finalized | `close --reason "$REASON"` |
 | User explicitly requests ship/push | Read `references/ship.md` |
 
 Repeated `enter` is idempotent. On `continue`, do not reload references or create
 another checkpoint. One thread may claim a repo branch at a
-time; `park`, successful ship, or a clean no-op post-hook releases the claim.
+time; `close`, `park`, successful ship, or a clean no-op post-hook releases it.
 
 ## Goal Boundary
 

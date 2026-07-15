@@ -20,7 +20,7 @@ scenarios. The executable suite contains 52 legacy tests and 20 V2 tests.
 | Verification identity | Exact complete `state_oid` may transfer to a promoted commit |
 | Partial promotion | Verification for unrelated dirty state is not transferred |
 | Concurrent entry | Exactly one task acquires a repo/branch claim |
-| Claim release | Park, ship, and clean no-op settle release; dirty settle retains |
+| Claim release | Close, park, ship, and clean no-op settle release; dirty settle retains |
 | Read-only Hook | Return silently without a ledger, database, or ref |
 | Mutation Hook | Enter before the write and deny missing configuration or competing owner |
 | Direct Git bypass | Block raw history/delivery commands and require lifecycle CLI |

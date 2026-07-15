@@ -15,11 +15,11 @@ coordinator.
 
 | Layer | Observed | Assessment |
 |---|---:|---|
-| Triggered `SKILL.md` | 98 lines, 649 words | Pass: within 100-line and 650-word budgets |
+| Triggered `SKILL.md` | 99 lines, 649 words | Pass: within 100-line and 650-word budgets |
 | Conditional references | 4 | Pass: exactly at the allowed count |
 | Reference depth | One hop from `SKILL.md` | Pass |
 | Reference payload | 122 lines, 783 words total | Pass: each file is 12-49 lines |
-| Lifecycle CLI | 2,305 lines, 5,770 words | Bundled and not model-loaded |
+| Lifecycle CLI | 2,392 lines, 5,970 words | Bundled and not model-loaded |
 | SQLite store | 532 lines, 1,490 words | Separate persistence boundary |
 | Pre/Post Hook | 224 lines, 555 words | Silent on allow; no model tokens |
 | Skill package | 1 skill, 4 references, 2 scripts, 1 UI metadata file | Pass |
@@ -70,10 +70,10 @@ refs hold recovery payloads. The model retains only semantic goal classification
 
 - Same-goal continuation: no agent-dispatched checkpoint command.
 - Read-only task: no ledger, database, ref, or reference load.
-- `status` p95: 176.34 ms against a 250 ms budget.
-- `begin` p95: 403.68 ms against a 750 ms budget.
-- `guard` p95: 222.61 ms against a 500 ms budget.
-- Pre/Post no-op round trip p95: 565.80 ms against a 1000 ms budget.
+- `status` p95: 168.52 ms against a 250 ms budget.
+- `begin` p95: 407.16 ms against a 750 ms budget.
+- `guard` p95: 230.64 ms against a 500 ms budget.
+- Pre/Post no-op round trip p95: 519.38 ms against a 1000 ms budget.
 - Repeated `enter` is idempotent; operation ids make retries replayable.
 
 ## Maintenance boundary

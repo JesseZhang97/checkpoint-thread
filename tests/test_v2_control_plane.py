@@ -464,10 +464,29 @@ class V2ControlPlaneTests(unittest.TestCase):
             "--acceptance-source",
             "objective",
         )
+        closed = run_cli(
+            self.ledgers,
+            "shipper",
+            "close",
+            self.repo,
+            "--reason",
+            "local task complete",
+        )
+        bridge = run_cli(self.ledgers, "bridge-thread", "enter", self.repo)
+        run_cli(
+            self.ledgers,
+            "bridge-thread",
+            "close",
+            self.repo,
+            "--reason",
+            "claim handoff test",
+        )
         run_cli(self.ledgers, "shipper", "ship", None, "--fetch")
 
         entered = run_cli(self.ledgers, "next-thread", "enter", self.repo)
 
+        self.assertTrue(closed["claim_released"])
+        self.assertEqual("acquired", bridge["claim"]["action"])
         self.assertEqual("acquired", entered["claim"]["action"])
 
     def test_plugin_and_hook_manifests_are_installable_contracts(self) -> None:

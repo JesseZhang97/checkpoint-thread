@@ -101,7 +101,7 @@
 
     {"id":"CON-01","domain":"concurrency","name":"Concurrent threads have one branch owner","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_concurrent_threads_cannot_claim_the_same_branch"},
     {"id":"CON-02","domain":"concurrency","name":"Park releases branch ownership","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_park_releases_the_branch_for_another_thread"},
-    {"id":"CON-03","domain":"concurrency","name":"Successful ship releases branch ownership","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_successful_ship_releases_the_branch_claim"},
+    {"id":"CON-03","domain":"concurrency","name":"Explicit close and later successful ship release branch ownership","priority":"P0","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_successful_ship_releases_the_branch_claim"},
     {"id":"CON-04","domain":"concurrency","name":"Clean no-op post-hook releases an idle claim","priority":"P1","negative":false,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_post_hook_releases_a_clean_no_op_claim"},
     {"id":"CON-05","domain":"concurrency","name":"Dirty post-hook retains the active claim","priority":"P0","negative":true,"status":"automated","evidence":"tests/test_v2_control_plane.py::test_post_hook_retains_a_dirty_claim"},
 
