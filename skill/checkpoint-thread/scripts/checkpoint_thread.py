@@ -1157,6 +1157,12 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
             commit_count = len(entry["thread_commits"])
             merge_strategy = "rebase_and_merge" if commit_count else "none"
             dependencies = infer_branch_dependencies(root, branch, entry, repo_entry)
+            if remote_state == "conflict":
+                conflict_risk = "high"
+            elif remote_state in {"behind", "diverged"}:
+                conflict_risk = "medium"
+            else:
+                conflict_risk = "low"
             branches.append(
                 {
                     "repo_id": repo_id,
@@ -1182,10 +1188,13 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     ],
                     "unpublished_thread_commits": unpublished_thread_commits,
                     "merge_plan": {
+                        "source": branch,
                         "target": target,
                         "strategy": merge_strategy,
                         "depends_on": dependencies,
+                        "pre_merge_action": solution,
                         "post_merge_verification": entry["verification"],
+                        "conflict_risk": conflict_risk,
                     },
                 }
             )
@@ -1237,7 +1246,7 @@ def branch_worktree(root: Path, branch: str) -> Path | None:
 
 def rebase_thread_owned_branch(
     ledger: dict[str, Any], ledger_id: str, branch_plan: dict[str, Any]
-) -> None:
+) -> dict[str, Any]:
     root = Path(branch_plan["repo"])
     branch = branch_plan["branch"]
     remote_ref = f"refs/remotes/{branch_plan['remote']}/{branch_plan['remote_branch']}"
@@ -1322,6 +1331,7 @@ def rebase_thread_owned_branch(
                     record["commit"] = matches[0]
                 elif record["commit"] in old_commits:
                     record["rewrite_status"] = "dropped_or_ambiguous"
+        new_tip = text(git(root, "rev-parse", f"refs/heads/{branch}"))
     finally:
         if temporary_worktree is not None:
             git(
@@ -1334,30 +1344,48 @@ def rebase_thread_owned_branch(
             )
             with contextlib.suppress(OSError):
                 temporary_worktree.rmdir()
+    return {
+        "action": "rebased",
+        "old_tip": old_tip,
+        "new_tip": new_tip,
+        "onto": remote_ref,
+        "safety_ref": safety_ref,
+    }
 
 
 def prepare_rebases(
     ledger: dict[str, Any], ledger_id: str, plan: dict[str, Any]
-) -> bool:
-    changed = False
+) -> dict[tuple[str, str], dict[str, Any]]:
+    receipts: dict[tuple[str, str], dict[str, Any]] = {}
     for branch in plan["branches"]:
         if (
             branch["remote_state"] == "diverged"
             and branch["ownership_status"] == "thread_owned"
             and not branch["conflict_paths"]
         ):
-            rebase_thread_owned_branch(ledger, ledger_id, branch)
-            changed = True
-    return changed
+            key = (branch["repo_id"], branch["branch"])
+            receipts[key] = rebase_thread_owned_branch(ledger, ledger_id, branch)
+    return receipts
 
 
 def command_ship(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         plan = build_ship_plan(ledger, fetch=args.fetch)
-        if prepare_rebases(ledger, args.ledger_id, plan):
+        rebase_receipts = prepare_rebases(ledger, args.ledger_id, plan)
+        if rebase_receipts:
             save_ledger(args.ledger_root, args.ledger_id, ledger)
             plan = build_ship_plan(ledger, fetch=False)
+        for item in plan["branches"]:
+            key = (item["repo_id"], item["branch"])
+            item["divergence_handling"] = rebase_receipts.get(
+                key,
+                {
+                    "action": "not_needed",
+                    "planned_action": item["divergence_solution"],
+                },
+            )
+            item["push_mode"] = "not_started"
         if not plan["all_ready"]:
             raise CheckpointError(
                 "ship_preflight_blocked",
@@ -1367,6 +1395,9 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
         by_key = {(item["repo_id"], item["branch"]): item for item in plan["branches"]}
         for group in plan["push_groups"]:
             root = Path(group["repo"])
+            push_mode = "atomic" if group["atomic"] else "single"
+            for branch in group["branches"]:
+                by_key[(group["repo_id"], branch)]["push_mode"] = push_mode
             refspecs = [
                 f"refs/heads/{branch}:refs/heads/{branch}"
                 for branch in group["branches"]
@@ -1399,6 +1430,8 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
                     "branch": item["branch"],
                     "commit": item["local_tip"],
                     "remote": item["remote"],
+                    "divergence_handling": item["divergence_handling"],
+                    "push_mode": item["push_mode"],
                 }
                 for item in plan["branches"]
             ],

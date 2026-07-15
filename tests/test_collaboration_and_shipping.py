@@ -55,6 +55,11 @@ class CollaborationAndShippingTests(unittest.TestCase):
             "rebase_onto_upstream_then_resolve", branch["divergence_solution"]
         )
         self.assertEqual("main", branch["merge_plan"]["target"])
+        self.assertEqual("high", branch["merge_plan"]["conflict_risk"])
+        self.assertEqual(
+            "rebase_onto_upstream_then_resolve",
+            branch["merge_plan"]["pre_merge_action"],
+        )
         self.assertIn("app.txt", branch["conflict_paths"])
 
     def test_ship_pushes_only_branches_with_thread_owned_commits(self) -> None:
@@ -128,6 +133,14 @@ class CollaborationAndShippingTests(unittest.TestCase):
         result = run_cli(self.ledgers, self.ledger_id, "ship", None, "--fetch")
 
         self.assertEqual("pushed", result["branches"][0]["push_status"])
+        handling = result["branches"][0]["divergence_handling"]
+        self.assertEqual("rebased", handling["action"])
+        self.assertEqual(old_tip, handling["old_tip"])
+        self.assertEqual(
+            git(self.repo, "rev-parse", "main").stdout.strip(), handling["new_tip"]
+        )
+        self.assertIn("pre-rebase", handling["safety_ref"])
+        self.assertEqual("single", result["branches"][0]["push_mode"])
         self.assertNotEqual(old_tip, git(self.repo, "rev-parse", "main").stdout.strip())
         self.assertEqual(
             git(self.repo, "rev-parse", "main").stdout.strip(),
@@ -305,6 +318,9 @@ class CollaborationAndShippingTests(unittest.TestCase):
         shipped = run_cli(self.ledgers, self.ledger_id, "ship", None, "--fetch")
         self.assertTrue(
             all(branch["push_status"] == "pushed" for branch in shipped["branches"])
+        )
+        self.assertTrue(
+            all(branch["push_mode"] == "atomic" for branch in shipped["branches"])
         )
         self.assertEqual(
             git(self.repo, "rev-parse", "main").stdout.strip(),
