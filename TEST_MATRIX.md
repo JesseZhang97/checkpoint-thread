@@ -82,7 +82,7 @@ Run the opt-in real-remote collaboration matrix with:
 
 ```bash
 python3 scripts/run_github_collaboration_lab.py \
-  --remote git@github.com:OWNER/checkpoint-thread-lab.git \
+  --remote git@github.com:OWNER/checkpoint-thread.git \
   --allow-remote-mutation \
   --report work/github-collaboration-report.json
 ```

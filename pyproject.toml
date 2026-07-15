@@ -1,7 +1,7 @@
 [project]
-name = "checkpoint-thread-lab"
+name = "checkpoint-thread"
 version = "0.1.0"
 requires-python = ">=3.11"
 
-[tool.checkpoint-thread-lab]
+[tool.checkpoint-thread]
 test-command = "python3 -m unittest discover -s tests -v"

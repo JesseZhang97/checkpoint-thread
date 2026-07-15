@@ -2,7 +2,8 @@
 
 ## Remote
 
-- Repository: `JesseZhang97/checkpoint-thread-lab`
+- Repository during the run: `JesseZhang97/checkpoint-thread-lab` (now promoted
+  to the canonical `JesseZhang97/checkpoint-thread` repository)
 - Visibility: private
 - Default branch: `main`
 - Driver: `scripts/run_github_collaboration_lab.py`
