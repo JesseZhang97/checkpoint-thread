@@ -117,11 +117,11 @@ def checkpoint(
         ) from error
 
 
-def begin(ledger_root: Path, ledger_id: str, repo: Path) -> dict[str, Any]:
+def enter(ledger_root: Path, ledger_id: str, repo: Path) -> dict[str, Any]:
     return checkpoint(
         ledger_root,
         ledger_id,
-        "begin",
+        "enter",
         repo,
         "--merge-target",
         "main",
@@ -182,7 +182,7 @@ def clean_divergence(
     ledger_root = workspace / "ledgers"
     create_remote_branch(remote_actor, branch)
     local_actor = clone(remote, workspace / "clean-local", branch)
-    begin(ledger_root, ledger_id, local_actor)
+    enter(ledger_root, ledger_id, local_actor)
 
     local_path = f"collaboration-fixtures/{run_id}-local.txt"
     write_fixture(local_actor, local_path, "local thread change\n")
@@ -258,7 +258,7 @@ def conflicting_divergence(
     git(remote_actor, "push", "-qu", "origin", branch)
 
     local_actor = clone(remote, workspace / "conflict-local", branch)
-    begin(ledger_root, ledger_id, local_actor)
+    enter(ledger_root, ledger_id, local_actor)
     write_fixture(local_actor, shared_path, "local version\n")
     promote(
         ledger_root,
@@ -303,7 +303,7 @@ def late_remote_advance(
     ledger_root = workspace / "ledgers"
     create_remote_branch(remote_actor, branch)
     local_actor = clone(remote, workspace / "late-race-local", branch)
-    begin(ledger_root, ledger_id, local_actor)
+    enter(ledger_root, ledger_id, local_actor)
 
     local_path = f"collaboration-fixtures/{run_id}-late-local.txt"
     write_fixture(local_actor, local_path, "local before push race\n")
@@ -376,7 +376,7 @@ def unowned_new_branch(
         "pre-thread\n",
         "chore: add pre-thread collaboration fixture",
     )
-    begin(ledger_root, ledger_id, local_actor)
+    enter(ledger_root, ledger_id, local_actor)
     owned_path = f"collaboration-fixtures/{run_id}-owned.txt"
     write_fixture(local_actor, owned_path, "thread-owned\n")
     promote(
@@ -418,7 +418,7 @@ def atomic_multi_branch(
     actor = clone(remote, workspace / "atomic-local")
     for number, branch in enumerate(branches, start=1):
         git(actor, "switch", "-qC", branch, "origin/main")
-        begin(ledger_root, ledger_id, actor)
+        enter(ledger_root, ledger_id, actor)
         relative = f"collaboration-fixtures/{run_id}-atomic-{number}.txt"
         write_fixture(actor, relative, f"atomic branch {number}\n")
         promote(

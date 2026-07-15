@@ -20,25 +20,27 @@ class StatusAndSnapshotTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tempdir.cleanup()
 
-    def test_begin_is_idempotent_and_records_the_original_baseline(self) -> None:
-        first = run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+    def test_enter_is_idempotent_and_records_the_original_baseline(self) -> None:
+        first = run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         first_head = first["head"]
         first_ref = first["baseline_ref"]
 
         (self.repo / "app.txt").write_text("changed later\n", encoding="utf-8")
-        second = run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        second = run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
 
-        self.assertEqual("begun", first["action"])
+        self.assertEqual("entered", first["action"])
         self.assertEqual("already_active", second["action"])
         self.assertEqual(first_head, second["head"])
         self.assertEqual(first_ref, second["baseline_ref"])
         self.assertTrue(ref_exists(self.repo, first_ref))
 
-    def test_read_only_status_does_not_create_a_ledger_or_private_ref(self) -> None:
+    def test_read_only_status_does_not_create_control_plane_or_private_ref(
+        self,
+    ) -> None:
         result = run_cli(self.ledgers, self.ledger_id, "status", self.repo)
 
-        self.assertEqual("begin", result["action"])
-        self.assertFalse((self.ledgers / self.ledger_id / "ledger.json").exists())
+        self.assertEqual("enter", result["action"])
+        self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
         refs = git(
             self.repo,
             "for-each-ref",
@@ -87,20 +89,21 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual("configured", configured_payload["action"])
         self.assertEqual(str(selected.resolve()), configured_payload["ledger_root"])
 
-        begun = run(
+        entered = run(
             [
                 sys.executable,
                 CLI,
                 "--ledger-id",
                 self.ledger_id,
-                "begin",
+                "enter",
                 "--repo",
                 self.repo,
             ],
             env=environment,
         )
-        self.assertEqual("begun", json.loads(begun.stdout)["action"])
-        self.assertTrue((selected / self.ledger_id / "ledger.json").is_file())
+        self.assertEqual("entered", json.loads(entered.stdout)["action"])
+        self.assertTrue((selected / "checkpoint-thread.sqlite3").is_file())
+        self.assertEqual([], list(selected.rglob("ledger.json")))
 
         replacement = self.root / "replacement-ledgers"
         blocked = run(
@@ -126,7 +129,9 @@ class StatusAndSnapshotTests(unittest.TestCase):
         )
         self.assertEqual("configured", json.loads(replaced.stdout)["action"])
 
-    def test_status_reports_non_repo_and_corrupt_ledger_as_json_errors(self) -> None:
+    def test_status_reports_non_repo_and_corrupt_control_plane_as_json_errors(
+        self,
+    ) -> None:
         non_repo = self.root / "not-a-repo"
         non_repo.mkdir()
         missing = run_cli(
@@ -138,9 +143,9 @@ class StatusAndSnapshotTests(unittest.TestCase):
         )
         self.assertEqual("not_a_git_repository", missing["error"])
 
-        ledger_path = self.ledgers / self.ledger_id / "ledger.json"
-        ledger_path.parent.mkdir(parents=True)
-        ledger_path.write_text("{broken", encoding="utf-8")
+        database_path = self.ledgers / "checkpoint-thread.sqlite3"
+        database_path.parent.mkdir(parents=True)
+        database_path.write_bytes(b"not sqlite")
         corrupt = run_cli(
             self.ledgers,
             self.ledger_id,
@@ -148,10 +153,10 @@ class StatusAndSnapshotTests(unittest.TestCase):
             self.repo,
             expected_code=2,
         )
-        self.assertEqual("ledger_unreadable", corrupt["error"])
+        self.assertEqual("control_plane_unreadable", corrupt["error"])
 
     def test_status_reports_partial_staging_without_mutating_the_index(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "app.txt").write_text("staged\n", encoding="utf-8")
         git(self.repo, "add", "app.txt")
         (self.repo / "app.txt").write_text("unstaged\n", encoding="utf-8")
@@ -164,7 +169,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual("continue", result["action"])
 
     def test_snapshot_preserves_staged_unstaged_and_untracked_content(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "app.txt").write_text("staged version\n", encoding="utf-8")
         git(self.repo, "add", "app.txt")
         (self.repo / "app.txt").write_text("working version\n", encoding="utf-8")
@@ -203,7 +208,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         (self.repo / ".gitignore").write_text("ignored-output/\n", encoding="utf-8")
         git(self.repo, "add", ".gitignore")
         git(self.repo, "commit", "-qm", "ignore generated output")
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "ignored-output").mkdir()
         (self.repo / "ignored-output" / "results.xml").write_text(
             "ignored\n", encoding="utf-8"
@@ -250,7 +255,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         git(self.repo, "commit", "-qam", "main change")
         merge = git(self.repo, "merge", "side", check=False)
         self.assertNotEqual(0, merge.returncode)
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo, expected_code=2)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo, expected_code=2)
 
         result = run_cli(
             self.ledgers,
@@ -267,7 +272,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual("unmerged_index", result["error"])
         self.assertEqual(["app.txt"], result["paths"])
 
-    def test_begin_blocks_a_clean_index_during_an_in_progress_merge(self) -> None:
+    def test_enter_blocks_a_clean_index_during_an_in_progress_merge(self) -> None:
         git(self.repo, "switch", "-qc", "side")
         (self.repo / "side.txt").write_text("side\n", encoding="utf-8")
         git(self.repo, "add", "side.txt")
@@ -278,7 +283,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         result = run_cli(
             self.ledgers,
             "merge-thread",
-            "begin",
+            "enter",
             self.repo,
             expected_code=2,
         )
@@ -290,7 +295,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         (self.repo / "tracked.bin").write_bytes(b"a" * 2048)
         git(self.repo, "add", "tracked.bin")
         git(self.repo, "commit", "-qm", "add tracked binary")
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "tracked.bin").write_bytes(b"b" * 4096)
 
         result = run_cli(
@@ -322,7 +327,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         git(self.repo, "add", "old-name.txt", "delete-me.txt", "script.sh")
         git(self.repo, "commit", "-qm", "test: seed file state fixtures")
         git(self.repo, "config", "core.filemode", "true")
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
 
         git(self.repo, "mv", "old-name.txt", "renamed.txt")
         (self.repo / "delete-me.txt").unlink()
@@ -365,7 +370,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
     def test_park_and_restore_round_trip_partial_staging_and_untracked_files(
         self,
     ) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "app.txt").write_text("staged\n", encoding="utf-8")
         git(self.repo, "add", "app.txt")
         (self.repo / "app.txt").write_text("working\n", encoding="utf-8")
@@ -406,7 +411,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual(index_before, git(self.repo, "diff", "--cached").stdout)
 
     def test_park_refuses_to_clean_an_incomplete_snapshot(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
 
         result = run_cli(
@@ -422,27 +427,27 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual("snapshot_incomplete", result["error"])
         self.assertTrue((self.repo / ".env").exists())
 
-    def test_begin_blocks_detached_head(self) -> None:
+    def test_enter_blocks_detached_head(self) -> None:
         git(self.repo, "checkout", "-q", "--detach")
 
         result = run_cli(
             self.ledgers,
             "detached-thread",
-            "begin",
+            "enter",
             self.repo,
             expected_code=2,
         )
 
         self.assertEqual("detached_head", result["error"])
 
-    def test_begin_blocks_a_secret_already_in_the_index(self) -> None:
+    def test_enter_blocks_a_secret_already_in_the_index(self) -> None:
         (self.repo / ".env").write_text("TOKEN=secret\n", encoding="utf-8")
         git(self.repo, "add", ".env")
 
         result = run_cli(
             self.ledgers,
             "secret-thread",
-            "begin",
+            "enter",
             self.repo,
             expected_code=2,
         )
@@ -451,7 +456,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual([".env"], result["paths"])
 
     def test_restore_requires_explicit_confirmation(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "notes.txt").write_text("notes\n", encoding="utf-8")
         parked = run_cli(
             self.ledgers,
@@ -475,7 +480,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertEqual("restore_requires_confirmation", result["error"])
 
     def test_restore_refuses_to_overwrite_new_dirty_state(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "notes.txt").write_text("saved\n", encoding="utf-8")
         parked = run_cli(
             self.ledgers,
@@ -502,7 +507,7 @@ class StatusAndSnapshotTests(unittest.TestCase):
         self.assertTrue((self.repo / "new-state.txt").exists())
 
     def test_restore_refuses_a_snapshot_from_a_different_head(self) -> None:
-        run_cli(self.ledgers, self.ledger_id, "begin", self.repo)
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
         (self.repo / "saved.txt").write_text("saved\n", encoding="utf-8")
         checkpoint = run_cli(
             self.ledgers,

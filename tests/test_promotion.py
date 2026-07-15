@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import git, init_repo, init_unborn_repo, run, run_cli
+from helpers import git, init_repo, init_unborn_repo, load_ledger_state, run, run_cli
 
 
 class PromotionTests(unittest.TestCase):
@@ -16,7 +15,7 @@ class PromotionTests(unittest.TestCase):
         self.ledgers = self.root / "ledgers"
         self.ledger_id = "promotion-thread"
         run_cli(
-            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", self.repo, "--merge-target", "main"
         )
 
     def tearDown(self) -> None:
@@ -182,11 +181,11 @@ class PromotionTests(unittest.TestCase):
             result["checkpoint_ref"].startswith("refs/codex/checkpoint-thread/")
         )
 
-    def test_promote_does_not_claim_a_path_that_was_dirty_before_begin(self) -> None:
+    def test_promote_does_not_claim_a_path_that_was_dirty_before_enter(self) -> None:
         other_repo = init_repo(self.root / "dirty-repo")
         (other_repo / "app.txt").write_text("user state\n", encoding="utf-8")
         dirty_ledger = "dirty-thread"
-        run_cli(self.ledgers, dirty_ledger, "begin", other_repo)
+        run_cli(self.ledgers, dirty_ledger, "enter", other_repo)
         (other_repo / "app.txt").write_text("agent state\n", encoding="utf-8")
 
         result = run_cli(
@@ -269,9 +268,7 @@ class PromotionTests(unittest.TestCase):
             "explicit",
         )
 
-        ledger = json.loads(
-            (self.ledgers / self.ledger_id / "ledger.json").read_text(encoding="utf-8")
-        )
+        ledger = load_ledger_state(self.ledgers, self.ledger_id)
         branch = next(iter(ledger["repos"].values()))["branches"]["main"]
         source = next(
             item for item in branch["checkpoints"] if item["ref"] == provisional["ref"]
@@ -285,7 +282,7 @@ class PromotionTests(unittest.TestCase):
         git(repo, "add", "old-name.txt")
         git(repo, "commit", "-qm", "test: seed rename source")
         ledger_id = "rename-thread"
-        run_cli(self.ledgers, ledger_id, "begin", repo, "--merge-target", "main")
+        run_cli(self.ledgers, ledger_id, "enter", repo, "--merge-target", "main")
         git(repo, "mv", "old-name.txt", "new-name.txt")
 
         result = run_cli(
@@ -317,10 +314,10 @@ class PromotionTests(unittest.TestCase):
         run(["git", "init", "-q", "--bare", remote])
         git(repo, "remote", "add", "origin", str(remote))
         ledger_id = "unborn-thread"
-        begun = run_cli(
-            self.ledgers, ledger_id, "begin", repo, "--merge-target", "main"
+        entered = run_cli(
+            self.ledgers, ledger_id, "enter", repo, "--merge-target", "main"
         )
-        self.assertIsNone(begun["head"])
+        self.assertIsNone(entered["head"])
 
         (repo / "feature.txt").write_text("staged\n", encoding="utf-8")
         git(repo, "add", "feature.txt")
@@ -430,11 +427,11 @@ class PromotionTests(unittest.TestCase):
             git(remote, "rev-parse", "refs/heads/main").stdout.strip(),
         )
 
-    def test_unborn_branch_does_not_claim_paths_present_before_begin(self) -> None:
+    def test_unborn_branch_does_not_claim_paths_present_before_enter(self) -> None:
         repo = init_unborn_repo(self.root / "unborn-preexisting")
         (repo / "existing.txt").write_text("user scaffold\n", encoding="utf-8")
         ledger_id = "unborn-preexisting-thread"
-        run_cli(self.ledgers, ledger_id, "begin", repo)
+        run_cli(self.ledgers, ledger_id, "enter", repo)
         (repo / "existing.txt").write_text("agent edit\n", encoding="utf-8")
 
         result = run_cli(
@@ -459,7 +456,7 @@ class PromotionTests(unittest.TestCase):
     def test_unborn_commit_hook_failure_keeps_repository_unborn(self) -> None:
         repo = init_unborn_repo(self.root / "unborn-hook")
         ledger_id = "unborn-hook-thread"
-        run_cli(self.ledgers, ledger_id, "begin", repo)
+        run_cli(self.ledgers, ledger_id, "enter", repo)
         (repo / "root.txt").write_text("root\n", encoding="utf-8")
         hook = repo / ".git" / "hooks" / "pre-commit"
         hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")

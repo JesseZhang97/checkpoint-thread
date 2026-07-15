@@ -19,7 +19,6 @@ from checkpoint_store import (
     ControlPlane,
     ControlPlaneError,
     database_path,
-    projection_path,
 )
 
 
@@ -276,10 +275,6 @@ def worktree_id_for(root: Path) -> str:
     return hashlib.sha256(str(root).encode()).hexdigest()[:16]
 
 
-def ledger_path(root: Path, ledger_id: str) -> Path:
-    return projection_path(root, safe_component(ledger_id))
-
-
 def load_configuration() -> dict[str, Any] | None:
     path = configuration_path()
     if not path.exists():
@@ -322,9 +317,10 @@ def save_configuration(ledger_root: Path) -> None:
 
 @contextlib.contextmanager
 def ledger_lock(root: Path, ledger_id: str) -> Iterator[None]:
-    directory = root / safe_component(ledger_id)
+    directory = root / ".locks"
     directory.mkdir(parents=True, exist_ok=True)
-    lock_path = directory / ".lock"
+    lock_name = safe_component(ledger_id).replace("/", "--") + ".lock"
+    lock_path = directory / lock_name
     with lock_path.open("a+b") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         try:
@@ -346,7 +342,7 @@ def new_ledger(ledger_id: str) -> dict[str, Any]:
 
 def load_ledger(root: Path, ledger_id: str, *, required: bool = True) -> dict[str, Any]:
     try:
-        ledger, _ = ControlPlane(root).load(ledger_id, required=required)
+        ledger = ControlPlane(root).load(ledger_id, required=required)
     except ControlPlaneError as error:
         raise CheckpointError(error.code, **error.details) from error
     return ledger if ledger is not None else new_ledger(ledger_id)
@@ -573,7 +569,7 @@ def snapshot_internal(
     return checkpoint
 
 
-def command_begin(args: argparse.Namespace) -> dict[str, Any]:
+def command_enter(args: argparse.Namespace) -> dict[str, Any]:
     root = repo_root(args.repo)
     changes = ensure_clean_operation_state(root)
     branch = current_branch(root)
@@ -664,7 +660,7 @@ def command_begin(args: argparse.Namespace) -> dict[str, Any]:
         )
         return {
             "ok": True,
-            "action": "begun",
+            "action": "entered",
             "ledger_id": args.ledger_id,
             "repo_id": repo_id,
             "repo": str(root),
@@ -689,7 +685,7 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     if changes["unmerged"] or operation:
         action = "blocked"
     elif not ledger["repos"]:
-        action = "begin"
+        action = "enter"
     elif not branch_registered:
         action = "enroll"
     else:
@@ -717,8 +713,8 @@ def command_guard(args: argparse.Namespace) -> dict[str, Any]:
             operation=status["operation"],
             changes=status["changes"],
         )
-    if status["action"] in {"begin", "enroll"}:
-        entered = command_begin(args)
+    if status["action"] in {"enter", "enroll"}:
+        entered = command_enter(args)
         return {
             "ok": True,
             "action": "allowed",
@@ -1944,7 +1940,7 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
         return plan
 
 
-def command_ledger_status(args: argparse.Namespace) -> dict[str, Any]:
+def command_inspect(args: argparse.Namespace) -> dict[str, Any]:
     ledger = load_ledger(args.ledger_root, args.ledger_id)
     control_plane = ControlPlane(args.ledger_root)
     repos = []
@@ -2002,9 +1998,11 @@ def command_ledger_status(args: argparse.Namespace) -> dict[str, Any]:
             }
         )
     repos.sort(key=lambda item: item["root"])
-    projection_matches = control_plane.projection_matches(args.ledger_id, ledger)
-    if not projection_matches:
-        integrity_issues.append({"type": "projection_mismatch"})
+    database_integrity = control_plane.integrity_check()
+    if database_integrity != "ok":
+        integrity_issues.append(
+            {"type": "control_plane_integrity", "detail": database_integrity}
+        )
     incomplete_operations = control_plane.incomplete_operations(args.ledger_id)
     for operation in incomplete_operations:
         integrity_issues.append({"type": "incomplete_operation", **operation})
@@ -2015,7 +2013,7 @@ def command_ledger_status(args: argparse.Namespace) -> dict[str, Any]:
         "repo_count": len(repos),
         "repos": repos,
         "event_count": control_plane.event_count(args.ledger_id),
-        "projection_matches": projection_matches,
+        "database_integrity": database_integrity,
         "incomplete_operations": incomplete_operations,
         "integrity": "ok" if not integrity_issues else "issues",
         "integrity_issues": integrity_issues,
@@ -2028,45 +2026,12 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
     ledgers = inventory["ledgers"]
     ledger_ids = set(ledgers)
     issues: list[dict[str, Any]] = []
-    repaired_projections: list[str] = []
-
-    projections: dict[str, Path] = {}
-    for path in args.ledger_root.rglob("ledger.json"):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            ledger_id = payload.get("ledger_id") if isinstance(payload, dict) else None
-        except (OSError, json.JSONDecodeError) as error:
-            issues.append(
-                {
-                    "type": "projection_unreadable",
-                    "path": str(path),
-                    "detail": str(error),
-                }
-            )
-            continue
-        if not isinstance(ledger_id, str):
-            issues.append({"type": "projection_missing_ledger_id", "path": str(path)})
-            continue
-        projections[ledger_id] = path
+    database_integrity = control_plane.integrity_check()
+    if database_integrity != "ok":
+        issues.append({"type": "control_plane_integrity", "detail": database_integrity})
 
     recorded_refs_by_repo: dict[Path, set[str]] = {}
     for ledger_id, ledger in ledgers.items():
-        path = projection_path(args.ledger_root, ledger_id)
-        projection_matches = control_plane.projection_matches(ledger_id, ledger)
-        if not projection_matches and args.repair_projections:
-            control_plane.write_projection(ledger_id, ledger)
-            repaired_projections.append(str(path))
-            issues = [item for item in issues if item.get("path") != str(path)]
-            projections[ledger_id] = path
-            projection_matches = True
-        if not projection_matches:
-            issues.append(
-                {
-                    "type": "projection_missing_or_mismatched",
-                    "ledger_id": ledger_id,
-                    "path": str(path),
-                }
-            )
         for repo_entry in ledger["repos"].values():
             root = Path(repo_entry["root"])
             recorded = recorded_refs_by_repo.setdefault(root, set())
@@ -2085,15 +2050,6 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
                 for item in branch_entry.get("history_safety_refs", []):
                     recorded.add(item["ref"])
 
-    for ledger_id, path in projections.items():
-        if ledger_id not in ledger_ids:
-            issues.append(
-                {
-                    "type": "orphan_projection",
-                    "ledger_id": ledger_id,
-                    "path": str(path),
-                }
-            )
     for claim in inventory["claims"]:
         owner = ledgers.get(claim["ledger_id"])
         branch_exists = bool(
@@ -2125,10 +2081,10 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "ok": True,
         "action": "diagnosed",
         "database_exists": control_plane.path.exists(),
+        "database_integrity": database_integrity,
         "ledger_ids": sorted(ledger_ids),
         "branch_claims": inventory["claims"],
         "incomplete_operations": inventory["incomplete_operations"],
-        "repaired_projections": repaired_projections,
         "integrity": "ok" if not issues else "issues",
         "integrity_issues": issues,
     }
@@ -2201,17 +2157,11 @@ def build_parser() -> argparse.ArgumentParser:
     configure.add_argument("--replace", action="store_true")
     configure.set_defaults(handler=command_configure)
 
-    begin = subparsers.add_parser("begin")
-    add_repo_argument(begin)
-    begin.add_argument("--merge-target")
-    begin.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
-    begin.set_defaults(handler=command_begin)
-
     enter = subparsers.add_parser("enter")
     add_repo_argument(enter)
     enter.add_argument("--merge-target")
     enter.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
-    enter.set_defaults(handler=command_begin)
+    enter.set_defaults(handler=command_enter)
 
     guard = subparsers.add_parser("guard")
     add_repo_argument(guard)
@@ -2302,15 +2252,11 @@ def build_parser() -> argparse.ArgumentParser:
     ship.add_argument("--fetch", action="store_true")
     ship.set_defaults(handler=command_ship)
 
-    ledger_status = subparsers.add_parser("ledger-status")
-    ledger_status.set_defaults(handler=command_ledger_status)
-
     inspect = subparsers.add_parser("inspect")
     inspect.add_argument("--check", action="store_true")
-    inspect.set_defaults(handler=command_ledger_status)
+    inspect.set_defaults(handler=command_inspect)
 
     doctor = subparsers.add_parser("doctor")
-    doctor.add_argument("--repair-projections", action="store_true")
     doctor.set_defaults(handler=command_doctor)
     return parser
 
@@ -2328,9 +2274,6 @@ def receipt_envelope(
     if ledger_root is not None:
         result.setdefault("ledger_root", str(ledger_root))
         result.setdefault("control_plane_path", str(database_path(ledger_root)))
-        ledger_id = getattr(args, "ledger_id", None)
-        if ledger_id:
-            result.setdefault("ledger_path", str(ledger_path(ledger_root, ledger_id)))
     if LAST_EVENT_ID is not None:
         result.setdefault("event_id", LAST_EVENT_ID)
     if getattr(args, "operation_id", None):

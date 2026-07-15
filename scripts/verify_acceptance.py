@@ -107,7 +107,7 @@ def benchmark_hot_path() -> dict[str, Any]:
             if result.returncode != 0:
                 raise RuntimeError(result.stderr or result.stdout)
 
-        begin_samples: list[float] = []
+        enter_samples: list[float] = []
         for index in range(10):
             started = time.perf_counter()
             result = run(
@@ -116,7 +116,7 @@ def benchmark_hot_path() -> dict[str, Any]:
                     CHECKPOINT_CLI,
                     "--ledger-id",
                     "hot-path-thread",
-                    "begin",
+                    "enter",
                     "--repo",
                     repo,
                     "--merge-target",
@@ -124,7 +124,7 @@ def benchmark_hot_path() -> dict[str, Any]:
                 ],
                 env={**os.environ, **environment},
             )
-            begin_samples.append((time.perf_counter() - started) * 1000)
+            enter_samples.append((time.perf_counter() - started) * 1000)
             if result.returncode != 0:
                 raise RuntimeError(result.stderr or result.stdout)
 
@@ -181,14 +181,14 @@ def benchmark_hot_path() -> dict[str, Any]:
     return {
         "status_p50_ms": round(statistics.median(status_samples), 2),
         "status_p95_ms": round(percentile(status_samples, 0.95), 2),
-        "begin_p50_ms": round(statistics.median(begin_samples), 2),
-        "begin_p95_ms": round(percentile(begin_samples, 0.95), 2),
+        "enter_p50_ms": round(statistics.median(enter_samples), 2),
+        "enter_p95_ms": round(percentile(enter_samples, 0.95), 2),
         "guard_p50_ms": round(statistics.median(guard_samples), 2),
         "guard_p95_ms": round(percentile(guard_samples, 0.95), 2),
         "hook_roundtrip_p50_ms": round(statistics.median(hook_samples), 2),
         "hook_roundtrip_p95_ms": round(percentile(hook_samples, 0.95), 2),
         "status_samples": len(status_samples),
-        "begin_samples": len(begin_samples),
+        "enter_samples": len(enter_samples),
         "guard_samples": len(guard_samples),
         "hook_roundtrip_samples": len(hook_samples),
     }
@@ -297,7 +297,7 @@ def main() -> int:
             evidence_valid = evidence.startswith("github:") and key in remote_scenarios
             covered = evidence_valid
         elif status == "benchmark":
-            thresholds = {"begin_p95_ms": 750, "status_p95_ms": 250}
+            thresholds = {"enter_p95_ms": 750, "status_p95_ms": 250}
             if evidence == "guard_hook_p95_ms":
                 evidence_valid = True
                 covered = (
@@ -361,10 +361,10 @@ def main() -> int:
         "tests_pass": tests_passed,
         "evidence_resolves": not validation_errors,
         "skill_lines": lean["lines"] <= 100,
-        "skill_words": lean["words"] <= 700,
+        "skill_words": lean["words"] <= 650,
         "conditional_references": lean["conditional_references"] <= 4,
         "status_p95": benchmark["status_p95_ms"] <= 250,
-        "begin_p95": benchmark["begin_p95_ms"] <= 750,
+        "enter_p95": benchmark["enter_p95_ms"] <= 750,
         "guard_p95": benchmark["guard_p95_ms"] <= 500,
         "hook_roundtrip_p95": benchmark["hook_roundtrip_p95_ms"] <= 1000,
     }

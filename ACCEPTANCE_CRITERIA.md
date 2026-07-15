@@ -38,7 +38,7 @@ the synchronous mutation guard is runtime enforcement, not model context.
 On the acceptance machine, the disposable-repo benchmark requires:
 
 - `status` p95 at or below 250 ms;
-- `begin` p95 at or below 750 ms.
+- `enter` p95 at or below 750 ms.
 - `guard` p95 at or below 500 ms;
 - complete `PreToolUse + PostToolUse` no-op round trip p95 at or below 1000 ms.
 
@@ -47,8 +47,8 @@ values and machine-independent structural limits are included in the report.
 
 ## Supported scope
 
-The catalog covers V1 migration, SQLite audit state, operation replay, projection
-diagnostics, exact verification identity, branch claims and their release,
+The catalog covers SQLite-only audit state, operation replay, database integrity,
+exact verification identity, branch claims and their release,
 unborn and ordinary worktrees, root commits, staging, untracked and ignored
 files, multiple branches/worktrees/repos, local and GitHub remotes, Hook allow
 and deny paths, concurrent remote changes, atomic rejection, rebase, conflict,

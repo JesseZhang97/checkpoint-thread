@@ -1,19 +1,19 @@
 {
-  "completed_at": "2026-07-15T12:49:02.306925+00:00",
+  "completed_at": "2026-07-15T13:11:28.575173+00:00",
   "ok": true,
   "remote": "https://github.com/JesseZhang97/checkpoint-thread-v2-lab-20260715124648.git",
-  "run_id": "20260715124710-5d331e",
+  "run_id": "20260715130951-87ccf4",
   "scenarios": {
     "atomic_multi_branch": {
       "atomic": true,
       "branches": [
-        "collab/20260715124710-5d331e/atomic-one",
-        "collab/20260715124710-5d331e/atomic-two"
+        "collab/20260715130951-87ccf4/atomic-one",
+        "collab/20260715130951-87ccf4/atomic-two"
       ],
       "published_ref_count": 2,
       "push_statuses": {
-        "collab/20260715124710-5d331e/atomic-one": "pushed",
-        "collab/20260715124710-5d331e/atomic-two": "pushed"
+        "collab/20260715130951-87ccf4/atomic-one": "pushed",
+        "collab/20260715130951-87ccf4/atomic-two": "pushed"
       }
     },
     "clean_divergence": {
@@ -21,25 +21,25 @@
         "Thread Agent",
         "Remote Collaborator"
       ],
-      "branch": "collab/20260715124710-5d331e/clean-divergence",
+      "branch": "collab/20260715130951-87ccf4/clean-divergence",
       "divergence_handling": {
         "action": "rebased",
-        "new_tip": "927309ae40501dee02c7a67f3fc11c4e4fbb9a4a",
-        "old_tip": "504d3e4ffbe1e45005a88939aa4c1aa03dca6c5c",
-        "onto": "refs/remotes/origin/collab/20260715124710-5d331e/clean-divergence",
-        "safety_ref": "refs/codex/checkpoint-thread/github-20260715124710-5d331e-clean/collab/20260715124710-5d331e/clean-divergence/pre-rebase-504d3e4ffbe1"
+        "new_tip": "e90b7ae8c816359d9d8d36ea98cdcccb2e571435",
+        "old_tip": "93ef2a5eaf0882fd11600f5f1ae9b0f530f1dc2a",
+        "onto": "refs/remotes/origin/collab/20260715130951-87ccf4/clean-divergence",
+        "safety_ref": "refs/codex/checkpoint-thread/github-20260715130951-87ccf4-clean/collab/20260715130951-87ccf4/clean-divergence/pre-rebase-93ef2a5eaf08"
       },
-      "final_tip": "927309ae40501dee02c7a67f3fc11c4e4fbb9a4a",
-      "old_local_tip": "504d3e4ffbe1e45005a88939aa4c1aa03dca6c5c",
+      "final_tip": "e90b7ae8c816359d9d8d36ea98cdcccb2e571435",
+      "old_local_tip": "93ef2a5eaf0882fd11600f5f1ae9b0f530f1dc2a",
       "private_refs_published": false,
       "push_mode": "single",
       "push_status": "pushed",
-      "remote_collaborator_tip": "14bd62b88d58bf5fb031ce0eee90ad521d28339a"
+      "remote_collaborator_tip": "49efb134ad434fa72fa3d793bd0416c315a71fb8"
     },
     "conflicting_divergence": {
-      "branch": "collab/20260715124710-5d331e/conflict",
+      "branch": "collab/20260715130951-87ccf4/conflict",
       "conflict_paths": [
-        "collaboration-fixtures/20260715124710-5d331e-shared.txt"
+        "collaboration-fixtures/20260715130951-87ccf4-shared.txt"
       ],
       "merge_plan": {
         "conflict_risk": "high",
@@ -48,8 +48,8 @@
           {
             "command": "not-applicable",
             "evidence": "no repository-defined check",
-            "head": "89a3ca4c44f8cbb3ee788f6ce69b9a51e2c7d0d5",
-            "recorded_at": "2026-07-15T12:47:51.006371+00:00",
+            "head": "0e456c7cb481203498101171fa670aced48584df",
+            "recorded_at": "2026-07-15T13:10:28.324960+00:00",
             "scope": "fixture-only Git behavior",
             "state_complete": true,
             "state_exclusions": {
@@ -58,12 +58,12 @@
               "large_untracked": [],
               "secret": []
             },
-            "state_oid": "450be39280b0715ff31ab9cfc29e79b3a46cc8ba",
+            "state_oid": "4cdd72054312d01a520f422a13d502c54adbae2e",
             "status": "not_applicable"
           }
         ],
         "pre_merge_action": "rebase_onto_upstream_then_resolve",
-        "source": "collab/20260715124710-5d331e/conflict",
+        "source": "collab/20260715130951-87ccf4/conflict",
         "strategy": "rebase_and_merge",
         "target": "main"
       },
@@ -72,23 +72,23 @@
       "solution": "rebase_onto_upstream_then_resolve"
     },
     "late_remote_advance": {
-      "branch": "collab/20260715124710-5d331e/late-remote-advance",
-      "local_commit": "ddfdee454363095b8935db1df5801867bdb7acdb",
-      "published_tip": "d9b64fb6276989e2a6ac3ce8191bda060aaaeff6",
+      "branch": "collab/20260715130951-87ccf4/late-remote-advance",
+      "local_commit": "706f5b80b08f143b71f67eccb49b4d8edaa51d8a",
+      "published_tip": "0e0fa617b0cc827c9a38805fa463ef19cb11679e",
       "push_mode": "single",
       "push_status": "failed",
-      "remote_commit": "d9b64fb6276989e2a6ac3ce8191bda060aaaeff6",
+      "remote_commit": "0e0fa617b0cc827c9a38805fa463ef19cb11679e",
       "solution": "fetch_and_replan"
     },
     "unowned_new_branch": {
-      "branch": "collab/20260715124710-5d331e/unowned",
+      "branch": "collab/20260715130951-87ccf4/unowned",
       "ownership_status": "unowned_local_commits",
       "push_status": "blocked",
       "remote_branch_created": false,
       "unowned_local_commits": [
-        "22dfcc925bf6708f77f43866b56d7f24b540e6e2"
+        "1ccab25cd02aa93b1c41cd498b34f490a66060a2"
       ]
     }
   },
-  "started_at": "2026-07-15T12:47:13.436898+00:00"
+  "started_at": "2026-07-15T13:09:55.075466+00:00"
 }

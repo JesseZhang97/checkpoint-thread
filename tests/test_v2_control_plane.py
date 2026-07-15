@@ -9,7 +9,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import CLI, git, init_repo, ref_exists, run, run_cli
+from helpers import (
+    CLI,
+    git,
+    init_repo,
+    load_ledger_state,
+    ref_exists,
+    run,
+    run_cli,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -62,10 +70,7 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(2, result["schema_version"])
         self.assertEqual(str(self.ledgers.resolve()), result["ledger_root"])
-        self.assertEqual(
-            str((self.ledgers / self.ledger_id / "ledger.json").resolve()),
-            result["ledger_path"],
-        )
+        self.assertNotIn("ledger_path", result)
         self.assertEqual(
             str((self.ledgers / "checkpoint-thread.sqlite3").resolve()),
             result["control_plane_path"],
@@ -87,13 +92,14 @@ class V2ControlPlaneTests(unittest.TestCase):
         )
         self.assertEqual("acquired", result["claim"]["action"])
         self.assertTrue(result["event_id"])
-        ledger = json.loads(Path(result["ledger_path"]).read_text(encoding="utf-8"))
+        ledger = load_ledger_state(self.ledgers, self.ledger_id)
         checkpoint = ledger["repos"][result["repo_id"]]["branches"]["main"][
             "checkpoints"
         ][0]
         self.assertEqual(2, ledger["version"])
         self.assertTrue(checkpoint["state_oid"])
         self.assertTrue(Path(result["control_plane_path"]).is_file())
+        self.assertEqual([], list(self.ledgers.rglob("ledger.json")))
 
     def test_non_config_command_rejects_a_different_ledger_root(self) -> None:
         run_cli(self.ledgers, self.ledger_id, "status", self.repo)
@@ -118,7 +124,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.assertEqual("ledger_root_mismatch", payload["error"])
         self.assertEqual(str(self.ledgers.resolve()), payload["configured_ledger_root"])
 
-    def test_v1_projection_migrates_to_sqlite_without_losing_state(self) -> None:
+    def test_legacy_state_and_cli_aliases_are_not_supported(self) -> None:
         run_cli(self.ledgers, "configure-only", "status", self.repo)
         path = self.ledgers / self.ledger_id / "ledger.json"
         path.parent.mkdir(parents=True)
@@ -136,12 +142,26 @@ class V2ControlPlaneTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        result = run_cli(self.ledgers, self.ledger_id, "inspect", None, "--check")
+        result = run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "inspect",
+            None,
+            "--check",
+            expected_code=2,
+        )
 
-        self.assertEqual("ok", result["integrity"])
-        self.assertEqual(1, result["event_count"])
-        self.assertEqual(2, json.loads(path.read_text(encoding="utf-8"))["version"])
-        self.assertTrue((self.ledgers / "checkpoint-thread.sqlite3").is_file())
+        self.assertEqual("ledger_not_found", result["error"])
+        self.assertEqual(1, json.loads(path.read_text(encoding="utf-8"))["version"])
+        self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
+        for command in ("begin", "ledger-status"):
+            legacy = run(
+                [sys.executable, CLI, "--ledger-id", self.ledger_id, command],
+                check=False,
+                env=self.environment,
+            )
+            self.assertEqual(2, legacy.returncode)
+            self.assertIn("invalid choice", legacy.stderr)
 
     def test_verification_state_is_carried_to_an_exact_promoted_commit(self) -> None:
         run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
@@ -173,9 +193,7 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         self.assertTrue(verification["verification"]["state_oid"])
         self.assertEqual(["python3 -m unittest"], promoted["carried_verifications"])
-        ledger = json.loads(
-            (self.ledgers / self.ledger_id / "ledger.json").read_text(encoding="utf-8")
-        )
+        ledger = load_ledger_state(self.ledgers, self.ledger_id)
         branch = next(iter(ledger["repos"].values()))["branches"]["main"]
         self.assertEqual(
             promoted["commit"], branch["verification"][0]["verified_commit"]
@@ -266,7 +284,7 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         entered = run_cli(self.ledgers, "thread-b", "enter", self.repo)
 
-        self.assertEqual("begun", entered["action"])
+        self.assertEqual("entered", entered["action"])
         self.assertEqual("acquired", entered["claim"]["action"])
 
     def test_completed_operation_id_replays_without_duplicate_event(self) -> None:
@@ -312,28 +330,20 @@ class V2ControlPlaneTests(unittest.TestCase):
             "failed-restore", inspected["incomplete_operations"][0]["operation_id"]
         )
 
-    def test_inspect_detects_a_projection_mismatch(self) -> None:
-        entered = run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
-        Path(entered["ledger_path"]).write_text("{}\n", encoding="utf-8")
+    def test_inspect_reports_sqlite_integrity_without_projection_repair(self) -> None:
+        run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
+        legacy = self.ledgers / "legacy-thread" / "ledger.json"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("{broken\n", encoding="utf-8")
 
         inspected = run_cli(self.ledgers, self.ledger_id, "inspect", None, "--check")
+        doctor = run_cli(self.ledgers, self.ledger_id, "doctor", None)
 
-        self.assertFalse(inspected["projection_matches"])
-        self.assertIn(
-            "projection_mismatch",
-            [issue["type"] for issue in inspected["integrity_issues"]],
-        )
-        doctor = run_cli(
-            self.ledgers,
-            self.ledger_id,
-            "doctor",
-            None,
-            "--repair-projections",
-        )
-        repaired = run_cli(self.ledgers, self.ledger_id, "inspect", None, "--check")
-        self.assertEqual([entered["ledger_path"]], doctor["repaired_projections"])
+        self.assertEqual("ok", inspected["database_integrity"])
+        self.assertNotIn("projection_matches", inspected)
         self.assertEqual("ok", doctor["integrity"])
-        self.assertTrue(repaired["projection_matches"])
+        self.assertEqual("ok", doctor["database_integrity"])
+        self.assertNotIn("repaired_projections", doctor)
 
     def test_hook_is_silent_for_read_only_tools_and_creates_no_state(self) -> None:
         payload = {
@@ -348,7 +358,6 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode)
         self.assertEqual("", result.stdout)
-        self.assertFalse((self.ledgers / "read-only-thread" / "ledger.json").exists())
         self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
 
     def test_hook_silently_enters_before_a_mutation(self) -> None:
@@ -356,9 +365,8 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual(0, result.returncode)
         self.assertEqual("", result.stdout)
-        path = self.ledgers / "hook-thread" / "ledger.json"
-        self.assertTrue(path.is_file())
-        ledger = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue((self.ledgers / "checkpoint-thread.sqlite3").is_file())
+        ledger = load_ledger_state(self.ledgers, "hook-thread")
         branch = next(iter(ledger["repos"].values()))["branches"]["main"]
         self.assertTrue(ref_exists(self.repo, branch["baseline_ref"]))
 
@@ -431,7 +439,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
         self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
         self.assertIn("direct git push", reason)
-        self.assertFalse((self.ledgers / "raw-git-thread" / "ledger.json").exists())
+        self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
 
     def test_successful_ship_releases_the_branch_claim(self) -> None:
         remote = self.root / "remote.git"

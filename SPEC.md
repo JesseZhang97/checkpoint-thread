@@ -3,7 +3,7 @@
 ## Intent
 
 Give one Codex thread local recovery and delivery structure without requiring a
-manual begin command or treating every turn as a commit. The skill tracks the
+manual entry command or treating every turn as a commit. The skill tracks the
 thread's work across files, branches, worktrees, and occasional multiple repos,
 then ships only the history owned by that thread.
 
@@ -24,12 +24,10 @@ stays within one concern until evidence supports a boundary.
 
 ## Control-plane invariants
 
-- The selected ledger root contains one SQLite V2 control plane. It is the
-  canonical state and audit store; per-thread `ledger.json` files are replaceable
-  compatibility projections.
+- The selected ledger root contains one SQLite V2 control plane. It is the only
+  ledger state and audit store; no projection or legacy migration path exists.
 - Every mutation receipt identifies the effective configuration, ledger root,
-  control-plane path, projection path, and event or operation id.
-- V1 JSON ledgers migrate lazily and atomically on first read.
+  control-plane path, and event or operation id.
 - Operation ids make completed calls replayable and incomplete calls diagnosable.
 - A `(repo common dir, branch)` claim has at most one task owner. Explicit
   clean-local `close`, `park`, and successful ship release it; PostToolUse

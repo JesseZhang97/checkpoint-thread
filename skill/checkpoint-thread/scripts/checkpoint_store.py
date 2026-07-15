@@ -4,10 +4,7 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import json
-import os
-import re
 import sqlite3
-import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
@@ -28,35 +25,32 @@ def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
-def safe_component(value: str) -> str:
-    sanitized = re.sub(r"[^A-Za-z0-9._/-]+", "-", value).strip("./-")
-    sanitized = sanitized.replace("..", "-").replace("@{", "-")
-    if not sanitized:
-        raise ControlPlaneError("invalid_ledger_id", value=value)
-    return sanitized
-
-
-def projection_path(root: Path, ledger_id: str) -> Path:
-    return root / safe_component(ledger_id) / "ledger.json"
-
-
 def database_path(root: Path) -> Path:
     return root / DATABASE_NAME
 
 
-def migrate_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    version = payload.get("version", 1)
-    if version not in {1, SCHEMA_VERSION}:
+def validate_payload(ledger_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    version = payload.get("version")
+    if version != SCHEMA_VERSION:
         raise ControlPlaneError(
             "unsupported_ledger_version",
             version=version,
-            supported=[1, SCHEMA_VERSION],
+            supported=SCHEMA_VERSION,
         )
-    migrated = version != SCHEMA_VERSION
-    payload["version"] = SCHEMA_VERSION
-    payload.setdefault("state", "active")
-    payload.setdefault("repos", {})
-    return payload, migrated
+    if not isinstance(payload.get("repos"), dict):
+        raise ControlPlaneError(
+            "control_plane_state_invalid",
+            detail="ledger repos must be an object",
+            solution="restore_the_control_plane_from_a_known_good_backup",
+        )
+    if payload.get("ledger_id") != ledger_id:
+        raise ControlPlaneError(
+            "control_plane_state_invalid",
+            ledger_id=ledger_id,
+            detail="ledger id does not match its control-plane key",
+            solution="restore_the_control_plane_from_a_known_good_backup",
+        )
+    return payload
 
 
 def decode_state(ledger_id: str, serialized: str) -> dict[str, Any]:
@@ -190,53 +184,20 @@ class ControlPlane:
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         connection.commit()
 
-    def load(
-        self, ledger_id: str, *, required: bool
-    ) -> tuple[dict[str, Any] | None, bool]:
+    def load(self, ledger_id: str, *, required: bool) -> dict[str, Any] | None:
         with self.connect(create=False) as connection:
             if connection is not None:
                 row = connection.execute(
                     "SELECT state_json FROM ledgers WHERE ledger_id = ?", (ledger_id,)
                 ).fetchone()
                 if row is not None:
-                    payload = decode_state(ledger_id, row["state_json"])
-                    migrated_payload, migrated = migrate_payload(payload)
-                    if migrated:
-                        self.save(
-                            ledger_id,
-                            migrated_payload,
-                            event={"operation": "migrate", "status": "completed"},
-                        )
-                    return migrated_payload, migrated
+                    return validate_payload(
+                        ledger_id, decode_state(ledger_id, row["state_json"])
+                    )
 
-        path = projection_path(self.root, ledger_id)
-        if not path.exists():
-            if required:
-                raise ControlPlaneError("ledger_not_found", ledger_id=ledger_id)
-            return None, False
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ControlPlaneError(
-                "ledger_unreadable", path=str(path), detail=str(error)
-            ) from error
-        if not isinstance(payload, dict):
-            raise ControlPlaneError(
-                "ledger_unreadable",
-                path=str(path),
-                detail="ledger projection must be a JSON object",
-            )
-        migrated_payload, _ = migrate_payload(payload)
-        self.save(
-            ledger_id,
-            migrated_payload,
-            event={
-                "operation": "migrate_v1_projection",
-                "status": "completed",
-                "detail": {"source": str(path)},
-            },
-        )
-        return migrated_payload, True
+        if required:
+            raise ControlPlaneError("ledger_not_found", ledger_id=ledger_id)
+        return None
 
     def save(
         self,
@@ -245,7 +206,7 @@ class ControlPlane:
         *,
         event: dict[str, Any] | None = None,
     ) -> str | None:
-        ledger, _ = migrate_payload(ledger)
+        ledger = validate_payload(ledger_id, ledger)
         timestamp = now_iso()
         ledger["updated_at"] = timestamp
         created_at = ledger.get("created_at") or timestamp
@@ -290,41 +251,7 @@ class ControlPlane:
                     ),
                 )
             connection.commit()
-        self.write_projection(ledger_id, ledger)
         return event_id
-
-    def write_projection(self, ledger_id: str, ledger: dict[str, Any]) -> None:
-        path = projection_path(self.root, ledger_id)
-        temporary: str | None = None
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fd, temporary = tempfile.mkstemp(
-                prefix="ledger-", suffix=".tmp", dir=path.parent
-            )
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(
-                    ledger,
-                    handle,
-                    ensure_ascii=False,
-                    sort_keys=True,
-                    indent=2,
-                )
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-        except OSError as error:
-            raise ControlPlaneError(
-                "projection_write_failed",
-                path=str(path),
-                canonical_state_saved=self.path.exists(),
-                detail=str(error),
-                solution="run_doctor_repair_projections",
-            ) from error
-        finally:
-            if temporary and os.path.exists(temporary):
-                with contextlib.suppress(OSError):
-                    os.unlink(temporary)
 
     def acquire_claim(
         self,
@@ -411,6 +338,13 @@ class ControlPlane:
                 ).fetchone()[0]
             )
 
+    def integrity_check(self) -> str:
+        with self.connect(create=False) as connection:
+            if connection is None:
+                return "missing"
+            row = connection.execute("PRAGMA integrity_check").fetchone()
+            return str(row[0])
+
     def events(self, ledger_id: str) -> list[dict[str, Any]]:
         with self.connect(create=False) as connection:
             if connection is None:
@@ -420,16 +354,6 @@ class ControlPlane:
                 (ledger_id,),
             ).fetchall()
             return [dict(row) for row in rows]
-
-    def projection_matches(self, ledger_id: str, ledger: dict[str, Any]) -> bool:
-        path = projection_path(self.root, ledger_id)
-        if not path.exists():
-            return False
-        try:
-            projection = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return False
-        return projection == ledger
 
     def start_operation(
         self, *, ledger_id: str, operation_id: str, command: str
@@ -524,7 +448,10 @@ class ControlPlane:
             ).fetchall()
             return {
                 "ledgers": {
-                    row["ledger_id"]: decode_state(row["ledger_id"], row["state_json"])
+                    row["ledger_id"]: validate_payload(
+                        row["ledger_id"],
+                        decode_state(row["ledger_id"], row["state_json"]),
+                    )
                     for row in ledger_rows
                 },
                 "claims": [dict(row) for row in claims],

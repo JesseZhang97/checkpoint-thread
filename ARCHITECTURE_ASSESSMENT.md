@@ -19,8 +19,8 @@ coordinator.
 | Conditional references | 4 | Pass: exactly at the allowed count |
 | Reference depth | One hop from `SKILL.md` | Pass |
 | Reference payload | 122 lines, 783 words total | Pass: each file is 12-49 lines |
-| Lifecycle CLI | 2,392 lines, 5,970 words | Bundled and not model-loaded |
-| SQLite store | 532 lines, 1,490 words | Separate persistence boundary |
+| Lifecycle CLI | 2,335 lines, 5,835 words | Bundled and not model-loaded |
+| SQLite store | 459 lines, 1,306 words | Separate persistence boundary |
 | Pre/Post Hook | 224 lines, 555 words | Silent on allow; no model tokens |
 | Skill package | 1 skill, 4 references, 2 scripts, 1 UI metadata file | Pass |
 | Acceptance suite | 100/100 scenarios, 72 tests | Original 80 plus 20 V2 scenarios |
@@ -63,17 +63,17 @@ claims. Successful Hook calls emit nothing into context.
 ### Layer 5: deterministic control and payload
 
 The CLI orchestrates lifecycle and Git operations. `checkpoint_store.py` owns
-SQLite schema, events, replay, claims, migration, and projections. Private Git
+SQLite schema, events, replay, claims, and integrity checks. Private Git
 refs hold recovery payloads. The model retains only semantic goal classification.
 
 ## Runtime efficiency
 
 - Same-goal continuation: no agent-dispatched checkpoint command.
 - Read-only task: no ledger, database, ref, or reference load.
-- `status` p95: 168.52 ms against a 250 ms budget.
-- `begin` p95: 407.16 ms against a 750 ms budget.
-- `guard` p95: 230.64 ms against a 500 ms budget.
-- Pre/Post no-op round trip p95: 519.38 ms against a 1000 ms budget.
+- `status` p95: 158.75 ms against a 250 ms budget.
+- `enter` p95: 377.27 ms against a 750 ms budget.
+- `guard` p95: 212.63 ms against a 500 ms budget.
+- Pre/Post no-op round trip p95: 591.86 ms against a 1000 ms budget.
 - Repeated `enter` is idempotent; operation ids make retries replayable.
 
 ## Maintenance boundary

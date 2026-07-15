@@ -18,10 +18,10 @@ Hook scenarios pass.
 | `SKILL.md` lines | <= 100 | 99 | Pass |
 | `SKILL.md` words | <= 650 | 649 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 168.52 ms | Pass |
-| `begin` p95 | <= 750 ms | 407.16 ms | Pass |
-| `guard` p95 | <= 500 ms | 230.64 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 519.38 ms | Pass |
+| `status` p95 | <= 250 ms | 158.75 ms | Pass |
+| `enter` p95 | <= 750 ms | 377.27 ms | Pass |
+| `guard` p95 | <= 500 ms | 212.63 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 591.86 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -44,11 +44,12 @@ The lean-architecture and progressive-disclosure review is in
 
 ## V2 Control Plane
 
-- SQLite schema V2 under the configured ledger root is canonical.
-- Per-task `ledger.json` remains a compatibility projection, not a second truth.
-- V1 JSON ledgers migrate lazily on first read.
-- Every receipt self-locates the configuration, database, projection, event, and
-  operation.
+- SQLite schema V2 under the configured ledger root is the only ledger state and
+  audit store.
+- No per-task JSON projection or legacy migration path exists.
+- Pre-release aliases are intentionally absent: lifecycle entry is `enter`, and
+  diagnostics use `inspect` or `doctor`.
+- Every receipt self-locates the configuration, database, event, and operation.
 - Operation ids make completed calls replayable and expose interrupted calls to
   `inspect --check`.
 - A repo/branch has at most one active task claim. Explicit clean-local close,
@@ -63,7 +64,7 @@ The lean-architecture and progressive-disclosure review is in
 
 - Enroll an initialized non-bare Git repository before its first mutation.
 - Keep a thread ledger outside business repositories, keyed by Git common dir.
-- Record branch baselines once across repeated `enter` or compatibility `begin` calls.
+- Record branch baselines once across repeated `enter` calls.
 - Reject detached HEAD, non-repository paths, and corrupt ledger state.
 - Do not silently claim dirty pre-thread paths, pre-thread commits, merely visited
   branches, or commits from another thread.
@@ -156,7 +157,7 @@ The lean-architecture and progressive-disclosure review is in
 
 The private GitHub lab used separate `Thread Agent` and `Remote Collaborator`
 identities and uniquely named collaboration branches. Run
-`20260715124710-5d331e` passed these scenarios:
+`20260715130951-87ccf4` passed these scenarios:
 
 | Scenario | Observed result |
 |---|---|

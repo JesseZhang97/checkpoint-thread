@@ -9,7 +9,7 @@
 - Post-run state: archived; deletion requires a GitHub CLI token with
   `delete_repo` scope
 - Driver: `scripts/run_github_collaboration_lab.py`
-- Verified run: `20260715124710-5d331e`
+- Verified run: `20260715130951-87ccf4`
 - Remote mutations: uniquely named `collab/<run-id>/...` branches only
 
 ## Real collaboration scenarios
@@ -34,8 +34,8 @@ evidence in the returned receipt. The second iteration added:
 - explicit high-risk classification for a verified content conflict.
 
 The final clean-divergence branch changed from local tip
-`504d3e4ffbe1e45005a88939aa4c1aa03dca6c5c` to rebased tip
-`927309ae40501dee02c7a67f3fc11c4e4fbb9a4a`. Its private safety ref remained
+`93ef2a5eaf0882fd11600f5f1ae9b0f530f1dc2a` to rebased tip
+`e90b7ae8c816359d9d8d36ea98cdcccb2e571435`. Its private safety ref remained
 local and the final tip matched the GitHub branch.
 
 ## Safety observations

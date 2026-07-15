@@ -110,11 +110,10 @@ $checkpoint-thread 修复订单详情页操作栏高度问题。
 
 ## 控制面
 
-V2 使用用户所选 ledger root 下的 `checkpoint-thread.sqlite3` 作为事实源，同时维护
-`<ledger-id>/ledger.json` 兼容投影；恢复内容仍存放在仓库的私有 Git refs。每个回执
-都包含实际 `ledger_root`、数据库路径、投影路径和事件/操作标识，`inspect --check`
-可诊断投影漂移、孤立 ref、分支占用和未完成操作。V1 JSON ledger 会在首次读取时
-原地迁移。
+V2 只使用用户所选 ledger root 下的 `checkpoint-thread.sqlite3` 保存 ledger 状态和
+审计事件，不创建 per-task JSON 投影，也不迁移旧格式。恢复内容仍存放在仓库的私有
+Git refs。每个回执都包含实际 `ledger_root`、数据库路径和事件/操作标识；
+`inspect --check` 可诊断数据库完整性、孤立 ref、分支占用和未完成操作。
 
 同一 repo branch 同时只允许一个 task 占用。干净的本地任务可用 `close` 保留未发布
 commit 并释放占用；`park`、成功 ship，以及没有留下脏状态的 no-op tool 也会释放。

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from helpers import clone_repo, git, init_repo, run, run_cli
+from helpers import clone_repo, git, init_repo, load_ledger_state, run, run_cli
 
 
 class CollaborationAndShippingTests(unittest.TestCase):
@@ -23,7 +22,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         self.ledgers = self.root / "ledgers"
         self.ledger_id = "shipping-thread"
         run_cli(
-            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", self.repo, "--merge-target", "main"
         )
 
     def tearDown(self) -> None:
@@ -217,7 +216,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         run_cli(
             self.ledgers,
             "new-branch-ownership",
-            "begin",
+            "enter",
             self.repo,
             "--merge-target",
             "main",
@@ -319,7 +318,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         self.record_not_applicable(self.repo)
         git(self.repo, "switch", "-qc", "feat/secondary", "origin/main")
         run_cli(
-            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", self.repo, "--merge-target", "main"
         )
         (self.repo / "secondary.txt").write_text("secondary\n", encoding="utf-8")
         run_cli(
@@ -378,7 +377,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         self.record_not_applicable(self.repo)
         git(self.repo, "switch", "-qc", "feat/atomic-race", "origin/main")
         run_cli(
-            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", self.repo, "--merge-target", "main"
         )
         (self.repo / "secondary-race.txt").write_text(
             "local secondary\n", encoding="utf-8"
@@ -446,9 +445,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
                 check=False,
             ).returncode,
         )
-        ledger = json.loads(
-            (self.ledgers / self.ledger_id / "ledger.json").read_text(encoding="utf-8")
-        )
+        ledger = load_ledger_state(self.ledgers, self.ledger_id)
         self.assertTrue(ledger["last_ship_failure"]["atomic"])
         self.assertEqual([], ledger["last_ship_failure"]["completed"])
 
@@ -459,7 +456,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         run_cli(
             self.ledgers,
             self.ledger_id,
-            "begin",
+            "enter",
             self.repo,
             "--merge-target",
             "main",
@@ -496,7 +493,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         run_cli(
             self.ledgers,
             self.ledger_id,
-            "begin",
+            "enter",
             self.repo,
             "--merge-target",
             "main",
@@ -662,7 +659,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
     def test_ship_plan_blocks_dirty_worktree_and_missing_local_branch(self) -> None:
         git(self.repo, "switch", "-qc", "feat/deleted", "origin/main")
         run_cli(
-            self.ledgers, self.ledger_id, "begin", self.repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", self.repo, "--merge-target", "main"
         )
         (self.repo / "owned.txt").write_text("owned\n", encoding="utf-8")
         run_cli(
@@ -700,7 +697,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         self,
     ) -> None:
         no_remote = init_repo(self.root / "no-remote")
-        run_cli(self.ledgers, "no-remote", "begin", no_remote, "--merge-target", "main")
+        run_cli(self.ledgers, "no-remote", "enter", no_remote, "--merge-target", "main")
         (no_remote / "change.txt").write_text("change\n", encoding="utf-8")
         run_cli(
             self.ledgers,
@@ -726,7 +723,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         run(["git", "init", "-q", "--bare", str(second)])
         git(ambiguous, "remote", "add", "one", str(first))
         git(ambiguous, "remote", "add", "two", str(second))
-        run_cli(self.ledgers, "ambiguous", "begin", ambiguous, "--merge-target", "main")
+        run_cli(self.ledgers, "ambiguous", "enter", ambiguous, "--merge-target", "main")
         (ambiguous / "change.txt").write_text("change\n", encoding="utf-8")
         run_cli(
             self.ledgers,
@@ -811,14 +808,14 @@ class CollaborationAndShippingTests(unittest.TestCase):
         worktree = self.root / "secondary-worktree"
         git(self.repo, "worktree", "add", "-q", str(worktree), "feat/worktree")
         run_cli(
-            self.ledgers, self.ledger_id, "begin", worktree, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", worktree, "--merge-target", "main"
         )
         other_repo = init_repo(self.root / "other-repo")
         run_cli(
-            self.ledgers, self.ledger_id, "begin", other_repo, "--merge-target", "main"
+            self.ledgers, self.ledger_id, "enter", other_repo, "--merge-target", "main"
         )
 
-        result = run_cli(self.ledgers, self.ledger_id, "ledger-status", None)
+        result = run_cli(self.ledgers, self.ledger_id, "inspect", None)
 
         self.assertEqual(2, result["repo_count"])
         origin_entry = next(
@@ -843,7 +840,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         run_cli(
             self.ledgers,
             self.ledger_id,
-            "begin",
+            "enter",
             worktree,
             "--merge-target",
             "main",
@@ -918,7 +915,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         git(second_seed, "push", "-qu", "origin", "main")
         git(second_remote, "symbolic-ref", "HEAD", "refs/heads/main")
         second = clone_repo(second_remote, self.root / "second")
-        run_cli(self.ledgers, self.ledger_id, "begin", second, "--merge-target", "main")
+        run_cli(self.ledgers, self.ledger_id, "enter", second, "--merge-target", "main")
         (second / "second.txt").write_text("second\n", encoding="utf-8")
         run_cli(
             self.ledgers,
@@ -963,7 +960,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
         git(second_remote, "symbolic-ref", "HEAD", "refs/heads/main")
         second_initial = git(second_remote, "rev-parse", "main").stdout.strip()
         second = clone_repo(second_remote, self.root / "z-second-repo")
-        run_cli(self.ledgers, self.ledger_id, "begin", second, "--merge-target", "main")
+        run_cli(self.ledgers, self.ledger_id, "enter", second, "--merge-target", "main")
         (second / "second.txt").write_text("second\n", encoding="utf-8")
         run_cli(
             self.ledgers,

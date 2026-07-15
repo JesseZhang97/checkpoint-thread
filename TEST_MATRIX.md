@@ -5,18 +5,18 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 `collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
 The quantified catalog contains the original 80 workflow scenarios plus 20 V2
-scenarios. The executable suite contains 52 legacy tests and 20 V2 tests.
+scenarios. The executable suite contains 52 original tests and 20 V2 tests.
 
 ## V2 control and enforcement
 
 | Scenario | Expected behavior |
 |---|---|
-| Canonical store | SQLite schema V2 is authoritative; JSON remains a matching projection |
-| V1 migration | First read imports the JSON ledger without losing repo state |
+| Canonical store | SQLite schema V2 is the only ledger state and audit store |
+| Legacy JSON | Ignore old projection files rather than importing or repairing them |
 | Root selection | Non-config commands reject a root different from saved configuration |
 | Enter preflight | Receipt locates every store and persists head, branch, changes, and result |
 | Operation identity | Completed ids replay once; interrupted ids remain visible to `inspect` |
-| Projection drift | `inspect --check` reports a mismatch without trusting the projection |
+| Database integrity | `inspect --check` and `doctor` report SQLite integrity directly |
 | Verification identity | Exact complete `state_oid` may transfer to a promoted commit |
 | Partial promotion | Verification for unrelated dirty state is not transferred |
 | Concurrent entry | Exactly one task acquires a repo/branch claim |
@@ -25,7 +25,7 @@ scenarios. The executable suite contains 52 legacy tests and 20 V2 tests.
 | Mutation Hook | Enter before the write and deny missing configuration or competing owner |
 | Direct Git bypass | Block raw history/delivery commands and require lifecycle CLI |
 | Package contract | Skill, plugin, marketplace, and Pre/Post Hook manifests resolve |
-| Performance | `status`, `begin`, `guard`, and Hook round trip stay within p95 budgets |
+| Performance | `status`, `enter`, `guard`, and Hook round trip stay within p95 budgets |
 
 ## Lifecycle and state
 
@@ -34,9 +34,9 @@ scenarios. The executable suite contains 52 legacy tests and 20 V2 tests.
 | First use without configuration | Block without mutation and suggest a root under `CODEX_HOME` |
 | User-selected ledger root | Persist once, reuse automatically, and require explicit replacement |
 | Unborn branch lifecycle | Park, restore, promote an exact-path root commit, verify, and ship |
-| Unborn pre-existing path | Refuse to claim files already present when the thread begins |
+| Unborn pre-existing path | Refuse to claim files already present when the thread enters |
 | First mutation | `guard` creates one preflight, baseline ledger entry, and private ref |
-| Repeated begin | Return the original baseline without overwriting it |
+| Repeated enter | Return the original baseline without overwriting it |
 | Detached HEAD | Block before creating a ledger entry |
 | Multiple worktrees | Share repo refs while retaining distinct worktree paths |
 | Multiple repos | Keep independent repo entries in one central ledger |
@@ -65,7 +65,7 @@ scenarios. The executable suite contains 52 legacy tests and 20 V2 tests.
 | Large tracked file | Preserve it because it already belongs to repo history |
 | Ignored test output | Leave it outside snapshots and commits; report its root |
 | Unignored generated output | Exclude it and report the path |
-| Dirty path before begin | Refuse to claim the whole file as thread-owned |
+| Dirty path before enter | Refuse to claim the whole file as thread-owned |
 
 ## Collaboration and delivery
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -118,3 +119,14 @@ def ref_exists(repo: Path, ref: str) -> bool:
     return (
         git(repo, "show-ref", "--verify", "--quiet", ref, check=False).returncode == 0
     )
+
+
+def load_ledger_state(ledger_root: Path, ledger_id: str) -> dict:
+    database = ledger_root / "checkpoint-thread.sqlite3"
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT state_json FROM ledgers WHERE ledger_id = ?", (ledger_id,)
+        ).fetchone()
+    if row is None:
+        raise AssertionError(f"ledger not found: {ledger_id}")
+    return json.loads(row[0])
