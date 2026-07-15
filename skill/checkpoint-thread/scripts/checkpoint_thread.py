@@ -1583,9 +1583,18 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                 if item["status"] == "passed"
                 and item.get("verified_commit", item.get("head")) != local_tip
             ]
+            current_verification = [
+                item
+                for item in verification
+                if item["status"] == "not_applicable"
+                or (
+                    item["status"] == "passed"
+                    and item.get("verified_commit", item.get("head")) == local_tip
+                )
+            ]
             if verification_failed:
                 blockers.append("fix_and_rerun_verification")
-            elif stale_verification:
+            elif stale_verification and not current_verification:
                 blockers.append("rerun_stale_verification")
             elif not verification:
                 blockers.append("record_verification_or_not_applicable")
@@ -1625,6 +1634,7 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     "worktree_dirty": worktree_dirty,
                     "verification": verification,
                     "verification_history": entry["verification"],
+                    "current_verification": current_verification,
                     "stale_verification": stale_verification,
                     "conflict_paths": conflict_paths,
                     "thread_commits": [

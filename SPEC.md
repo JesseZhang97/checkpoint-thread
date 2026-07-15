@@ -70,6 +70,8 @@ stays within one concern until evidence supports a boundary.
   state is complete and all changed paths are promoted together.
 - Partial promotion, exclusions, later edits, failed checks, or stale evidence
   require a new verification before ship.
+- Once the current tip has valid evidence, older passed command/scope records
+  remain audit history and do not keep the branch permanently blocked.
 
 ## Delivery invariants
 

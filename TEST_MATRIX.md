@@ -5,7 +5,7 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 `collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
 The quantified catalog contains the original 80 workflow scenarios plus 20 V2
-scenarios. The executable suite contains 52 original tests and 20 V2 tests.
+scenarios. The executable suite contains 53 original tests and 20 V2 tests.
 
 ## V2 control and enforcement
 

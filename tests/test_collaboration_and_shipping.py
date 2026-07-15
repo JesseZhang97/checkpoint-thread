@@ -569,6 +569,67 @@ class CollaborationAndShippingTests(unittest.TestCase):
         self.assertEqual("rerun_stale_verification", branch["divergence_solution"])
         self.assertEqual(1, len(branch["stale_verification"]))
 
+    def test_current_verification_allows_older_passed_scopes_to_remain_history(
+        self,
+    ) -> None:
+        (self.repo / "first.txt").write_text("first\n", encoding="utf-8")
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "first.txt",
+            "--message",
+            "feat: first verified state",
+            "--acceptance-source",
+            "objective",
+        )
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "record-verification",
+            self.repo,
+            "--verification-command",
+            "check-old-scope",
+            "--status",
+            "passed",
+            "--scope",
+            "first goal",
+        )
+        (self.repo / "second.txt").write_text("second\n", encoding="utf-8")
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "promote",
+            self.repo,
+            "--path",
+            "second.txt",
+            "--message",
+            "feat: second verified state",
+            "--acceptance-source",
+            "objective",
+        )
+        run_cli(
+            self.ledgers,
+            self.ledger_id,
+            "record-verification",
+            self.repo,
+            "--verification-command",
+            "check-release-scope",
+            "--status",
+            "passed",
+            "--scope",
+            "current release",
+        )
+
+        result = run_cli(self.ledgers, self.ledger_id, "ship-plan", None, "--fetch")
+
+        branch = result["branches"][0]
+        self.assertEqual("ready", branch["push_status"])
+        self.assertEqual(1, len(branch["current_verification"]))
+        self.assertEqual(1, len(branch["stale_verification"]))
+
     def test_latest_verification_supersedes_an_earlier_failure(self) -> None:
         (self.repo / "verified.txt").write_text("verified\n", encoding="utf-8")
         run_cli(

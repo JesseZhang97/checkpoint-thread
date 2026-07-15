@@ -14,14 +14,14 @@ Hook scenarios pass.
 | Lowest domain coverage | >= 80% | 100% | Pass |
 | Negative executable cases | >= 35% | 54.26% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 72/72 | Pass |
+| Local test suite | All pass | 73/73 | Pass |
 | `SKILL.md` lines | <= 100 | 99 | Pass |
 | `SKILL.md` words | <= 650 | 649 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 158.75 ms | Pass |
-| `enter` p95 | <= 750 ms | 377.27 ms | Pass |
-| `guard` p95 | <= 500 ms | 212.63 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 591.86 ms | Pass |
+| `status` p95 | <= 250 ms | 170.61 ms | Pass |
+| `enter` p95 | <= 750 ms | 412.10 ms | Pass |
+| `guard` p95 | <= 500 ms | 232.28 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 577.77 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -107,6 +107,8 @@ The lean-architecture and progressive-disclosure review is in
   before shipping.
 - Let the latest result for the same command and scope supersede older failures
   while retaining full history in the receipt.
+- Keep older passed scopes as audit history without blocking a currently verified
+  tip.
 - Block failed and stale passed checks. A factual `not_applicable` record remains
   valid across a rebase because it is a policy statement, not build output.
 
@@ -191,6 +193,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 72-test disposable-repository suite, resolves all 100
+The verifier runs the 73-test disposable-repository suite, resolves all 100
 catalog evidence pointers, measures the four hot paths, validates the lean-skill
 limits, and exits nonzero when any acceptance gate fails.

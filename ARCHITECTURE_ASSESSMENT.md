@@ -19,11 +19,11 @@ coordinator.
 | Conditional references | 4 | Pass: exactly at the allowed count |
 | Reference depth | One hop from `SKILL.md` | Pass |
 | Reference payload | 122 lines, 783 words total | Pass: each file is 12-49 lines |
-| Lifecycle CLI | 2,335 lines, 5,835 words | Bundled and not model-loaded |
+| Lifecycle CLI | 2,345 lines, 5,864 words | Bundled and not model-loaded |
 | SQLite store | 459 lines, 1,306 words | Separate persistence boundary |
 | Pre/Post Hook | 224 lines, 555 words | Silent on allow; no model tokens |
 | Skill package | 1 skill, 4 references, 2 scripts, 1 UI metadata file | Pass |
-| Acceptance suite | 100/100 scenarios, 72 tests | Original 80 plus 20 V2 scenarios |
+| Acceptance suite | 100/100 scenarios, 73 tests | Original 80 plus 20 V2 scenarios |
 
 The hot file is deliberately near its ceiling. New Git mechanics belong in code;
 rare policy belongs in an existing one-hop reference. A new hot-path concept must
@@ -70,10 +70,10 @@ refs hold recovery payloads. The model retains only semantic goal classification
 
 - Same-goal continuation: no agent-dispatched checkpoint command.
 - Read-only task: no ledger, database, ref, or reference load.
-- `status` p95: 158.75 ms against a 250 ms budget.
-- `enter` p95: 377.27 ms against a 750 ms budget.
-- `guard` p95: 212.63 ms against a 500 ms budget.
-- Pre/Post no-op round trip p95: 591.86 ms against a 1000 ms budget.
+- `status` p95: 170.61 ms against a 250 ms budget.
+- `enter` p95: 412.10 ms against a 750 ms budget.
+- `guard` p95: 232.28 ms against a 500 ms budget.
+- Pre/Post no-op round trip p95: 577.77 ms against a 1000 ms budget.
 - Repeated `enter` is idempotent; operation ids make retries replayable.
 
 ## Maintenance boundary
