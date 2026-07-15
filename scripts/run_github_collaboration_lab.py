@@ -5,6 +5,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -79,6 +80,7 @@ def checkpoint(
     command: str,
     repo: Path | None = None,
     *extra: str,
+    expected: int = 0,
 ) -> dict[str, Any]:
     args = [
         sys.executable,
@@ -92,7 +94,7 @@ def checkpoint(
     if repo is not None:
         args.extend(["--repo", str(repo)])
     args.extend(extra)
-    result = run(args)
+    result = run(args, expected=expected)
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError as error:
@@ -133,6 +135,23 @@ def promote(
     )
 
 
+def record_not_applicable(ledger_root: Path, ledger_id: str, repo: Path) -> None:
+    checkpoint(
+        ledger_root,
+        ledger_id,
+        "record-verification",
+        repo,
+        "--verification-command",
+        "not-applicable",
+        "--status",
+        "not_applicable",
+        "--scope",
+        "fixture-only Git behavior",
+        "--evidence",
+        "no repository-defined check",
+    )
+
+
 def create_remote_branch(actor: Path, branch: str) -> None:
     git(actor, "switch", "-qC", branch, "origin/main")
     git(actor, "push", "-qu", "origin", branch)
@@ -160,6 +179,7 @@ def clean_divergence(
         local_path,
         "feat: add local collaboration fixture",
     )
+    record_not_applicable(ledger_root, ledger_id, local_actor)
     old_local_tip = promoted["commit"]
 
     remote_path = f"collaboration-fixtures/{run_id}-remote.txt"
@@ -183,6 +203,10 @@ def clean_divergence(
         "--format=%(refname)",
         f"refs/codex/checkpoint-thread/{ledger_id}/",
     ).stdout.splitlines()
+    authors = git(local_actor, "log", "-2", "--format=%an").stdout.splitlines()
+    published_private_refs = run(
+        ["git", "ls-remote", remote, "refs/codex/checkpoint-thread/*"]
+    ).stdout.splitlines()
     assert branch_report["push_status"] == "pushed"
     assert branch_report["divergence_handling"]["action"] == "rebased"
     assert branch_report["divergence_handling"]["safety_ref"] in safety_refs
@@ -190,6 +214,8 @@ def clean_divergence(
     assert final_tip == published_tip
     assert old_local_tip != final_tip
     assert any("pre-rebase" in ref for ref in safety_refs)
+    assert set(authors) == {"Thread Agent", "Remote Collaborator"}
+    assert not published_private_refs
     return {
         "branch": branch,
         "old_local_tip": old_local_tip,
@@ -198,6 +224,8 @@ def clean_divergence(
         "push_status": branch_report["push_status"],
         "divergence_handling": branch_report["divergence_handling"],
         "push_mode": branch_report["push_mode"],
+        "authors": authors,
+        "private_refs_published": False,
     }
 
 
@@ -225,6 +253,7 @@ def conflicting_divergence(
         shared_path,
         "fix: apply local conflict version",
     )
+    record_not_applicable(ledger_root, ledger_id, local_actor)
 
     commit_fixture(
         remote_actor,
@@ -246,6 +275,73 @@ def conflicting_divergence(
         "conflict_paths": branch_report["conflict_paths"],
         "solution": branch_report["divergence_solution"],
         "merge_plan": branch_report["merge_plan"],
+    }
+
+
+def late_remote_advance(
+    remote: str,
+    workspace: Path,
+    remote_actor: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    branch = f"collab/{run_id}/late-remote-advance"
+    ledger_id = f"github-{run_id}-late-race"
+    ledger_root = workspace / "ledgers"
+    create_remote_branch(remote_actor, branch)
+    local_actor = clone(remote, workspace / "late-race-local", branch)
+    begin(ledger_root, ledger_id, local_actor)
+
+    local_path = f"collaboration-fixtures/{run_id}-late-local.txt"
+    write_fixture(local_actor, local_path, "local before push race\n")
+    local_commit = promote(
+        ledger_root,
+        ledger_id,
+        local_actor,
+        local_path,
+        "feat: add local push-race fixture",
+    )["commit"]
+    record_not_applicable(ledger_root, ledger_id, local_actor)
+
+    remote_path = f"collaboration-fixtures/{run_id}-late-remote.txt"
+    remote_commit = commit_fixture(
+        remote_actor,
+        remote_path,
+        "remote after local preflight\n",
+        "feat: add late remote fixture",
+    )
+    hook = local_actor / ".git" / "hooks" / "pre-push"
+    hook.write_text(
+        "#!/bin/sh\n"
+        f"git -C {shlex.quote(str(remote_actor))} push -q origin {shlex.quote(branch)}\n",
+        encoding="utf-8",
+    )
+    hook.chmod(0o755)
+
+    rejected = checkpoint(
+        ledger_root,
+        ledger_id,
+        "ship",
+        None,
+        "--fetch",
+        expected=2,
+    )
+    branch_report = rejected["branches_report"][0]
+    published_tip = run(
+        ["git", "ls-remote", remote, f"refs/heads/{branch}"]
+    ).stdout.split()[0]
+    assert rejected["error"] == "push_failed"
+    assert branch_report["push_status"] == "failed"
+    assert branch_report["divergence_solution"] == "fetch_and_replan"
+    assert published_tip == remote_commit
+    assert published_tip != local_commit
+    return {
+        "branch": branch,
+        "local_commit": local_commit,
+        "remote_commit": remote_commit,
+        "published_tip": published_tip,
+        "push_status": branch_report["push_status"],
+        "solution": branch_report["divergence_solution"],
+        "push_mode": branch_report["push_mode"],
     }
 
 
@@ -318,6 +414,7 @@ def atomic_multi_branch(
             relative,
             f"feat: add atomic collaboration fixture {number}",
         )
+        record_not_applicable(ledger_root, ledger_id, actor)
 
     plan = checkpoint(ledger_root, ledger_id, "ship-plan", None, "--fetch")
     assert len(plan["push_groups"]) == 1
@@ -393,6 +490,9 @@ def main() -> int:
                     args.remote, workspace, remote_actor, run_id
                 ),
                 "conflicting_divergence": conflicting_divergence(
+                    args.remote, workspace, remote_actor, run_id
+                ),
+                "late_remote_advance": late_remote_advance(
                     args.remote, workspace, remote_actor, run_id
                 ),
                 "unowned_new_branch": unowned_new_branch(

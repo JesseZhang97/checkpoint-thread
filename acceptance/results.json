@@ -1,0 +1,72 @@
+{
+  "accepted": true,
+  "benchmark": {
+    "begin_p50_ms": 408.39,
+    "begin_p95_ms": 420.23,
+    "begin_samples": 10,
+    "status_p50_ms": 167.02,
+    "status_p95_ms": 181.14,
+    "status_samples": 20
+  },
+  "coverage_by_domain": {
+    "delivery": 0.9917,
+    "goal_boundary": 1.0,
+    "invocation": 0.96,
+    "promotion": 1.0,
+    "recovery": 1.0,
+    "reporting_efficiency": 1.0,
+    "topology": 1.0
+  },
+  "coverage_by_priority": {
+    "P0": 1.0,
+    "P1": 1.0,
+    "P2": 0.8
+  },
+  "covered_scenario_count": 76,
+  "gaps": [
+    {
+      "id": "INV-07",
+      "name": "Unborn branch checkpoint lifecycle",
+      "priority": "P2",
+      "rationale": "Rare repository bootstrap edge; park already blocks conservatively and normal initialized repos are covered."
+    },
+    {
+      "id": "DEL-26",
+      "name": "Atomic group race rejects every ref in the group",
+      "priority": "P2",
+      "rationale": "Single-branch late race and atomic success are covered; the combined server race is retained as a rare edge."
+    }
+  ],
+  "gates": {
+    "begin_p95": true,
+    "conditional_references": true,
+    "evidence_resolves": true,
+    "negative_case_ratio": true,
+    "overall_weighted_coverage": true,
+    "p0_coverage": true,
+    "p1_coverage": true,
+    "per_domain_coverage": true,
+    "real_remote_scenarios": true,
+    "skill_lines": true,
+    "skill_words": true,
+    "status_p95": true,
+    "tests_pass": true
+  },
+  "lean_skill": {
+    "conditional_references": 4,
+    "lines": 90,
+    "words": 621
+  },
+  "negative_executable_ratio": 0.5634,
+  "real_remote_scenario_count": 5,
+  "remote_run_id": "20260715040846-a8ab38",
+  "scenario_count": 78,
+  "tests": {
+    "count": 46,
+    "passed": true,
+    "seconds": 69.622,
+    "summary": "----------------------------------------------------------------------\nRan 46 tests in 69.521s\n\nOK"
+  },
+  "validation_errors": [],
+  "weighted_coverage": 0.9937
+}

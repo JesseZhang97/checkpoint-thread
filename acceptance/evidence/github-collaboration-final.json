@@ -1,0 +1,86 @@
+{
+  "completed_at": "2026-07-15T04:10:41.465025+00:00",
+  "ok": true,
+  "remote": "git@github.com:JesseZhang97/checkpoint-thread-lab.git",
+  "run_id": "20260715040846-a8ab38",
+  "scenarios": {
+    "atomic_multi_branch": {
+      "atomic": true,
+      "branches": [
+        "collab/20260715040846-a8ab38/atomic-one",
+        "collab/20260715040846-a8ab38/atomic-two"
+      ],
+      "published_ref_count": 2,
+      "push_statuses": {
+        "collab/20260715040846-a8ab38/atomic-one": "pushed",
+        "collab/20260715040846-a8ab38/atomic-two": "pushed"
+      }
+    },
+    "clean_divergence": {
+      "authors": [
+        "Thread Agent",
+        "Remote Collaborator"
+      ],
+      "branch": "collab/20260715040846-a8ab38/clean-divergence",
+      "divergence_handling": {
+        "action": "rebased",
+        "new_tip": "578a4bdeb33197606d912c1297c095156469179a",
+        "old_tip": "d70ca755d1324307abb9b86558f240a7c9a2fcd2",
+        "onto": "refs/remotes/origin/collab/20260715040846-a8ab38/clean-divergence",
+        "safety_ref": "refs/codex/checkpoint-thread/github-20260715040846-a8ab38-clean/collab/20260715040846-a8ab38/clean-divergence/pre-rebase-d70ca755d132"
+      },
+      "final_tip": "578a4bdeb33197606d912c1297c095156469179a",
+      "old_local_tip": "d70ca755d1324307abb9b86558f240a7c9a2fcd2",
+      "private_refs_published": false,
+      "push_mode": "single",
+      "push_status": "pushed",
+      "remote_collaborator_tip": "ff5f22a76276044aae88845d717057299187959b"
+    },
+    "conflicting_divergence": {
+      "branch": "collab/20260715040846-a8ab38/conflict",
+      "conflict_paths": [
+        "collaboration-fixtures/20260715040846-a8ab38-shared.txt"
+      ],
+      "merge_plan": {
+        "conflict_risk": "high",
+        "depends_on": [],
+        "post_merge_verification": [
+          {
+            "command": "not-applicable",
+            "evidence": "no repository-defined check",
+            "head": "58b4c17984ed678116cb6fc2e184fd72f0ee74d8",
+            "recorded_at": "2026-07-15T04:09:30.143717+00:00",
+            "scope": "fixture-only Git behavior",
+            "status": "not_applicable"
+          }
+        ],
+        "pre_merge_action": "rebase_onto_upstream_then_resolve",
+        "source": "collab/20260715040846-a8ab38/conflict",
+        "strategy": "rebase_and_merge",
+        "target": "main"
+      },
+      "push_status": "blocked",
+      "remote_state": "conflict",
+      "solution": "rebase_onto_upstream_then_resolve"
+    },
+    "late_remote_advance": {
+      "branch": "collab/20260715040846-a8ab38/late-remote-advance",
+      "local_commit": "cf3b5c971723a18f10b419c867f7412bb0783cf9",
+      "published_tip": "eb495f8b81bd7dbc143d78072c6b62b78082911d",
+      "push_mode": "single",
+      "push_status": "failed",
+      "remote_commit": "eb495f8b81bd7dbc143d78072c6b62b78082911d",
+      "solution": "fetch_and_replan"
+    },
+    "unowned_new_branch": {
+      "branch": "collab/20260715040846-a8ab38/unowned",
+      "ownership_status": "unowned_local_commits",
+      "push_status": "blocked",
+      "remote_branch_created": false,
+      "unowned_local_commits": [
+        "2638f10b4e17f5bb9ac5c4441f6d8800e408c198"
+      ]
+    }
+  },
+  "started_at": "2026-07-15T04:08:50.620585+00:00"
+}

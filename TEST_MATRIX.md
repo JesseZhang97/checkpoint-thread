@@ -21,8 +21,10 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 | Partial staging | Report index/worktree overlap without changing the index |
 | Staged + unstaged + untracked | Preserve all three layers in a two-commit snapshot |
 | Park and restore | Round-trip partial staging and untracked files exactly |
+| Rename, delete, symlink, executable mode | Preserve Git path identity and file modes exactly |
 | Unmerged index | Block snapshots; rely on the pre-operation safety ref |
 | Explicit restore gate | Refuse restore without `--confirm` |
+| Dirty or moved restore target | Refuse to overwrite current work or restore onto a different HEAD |
 | Conflict markers | Block promotion while retaining a recovery ref |
 | Failed commit hook | Leave branch unchanged and retain the checkpoint ref |
 
@@ -50,6 +52,13 @@ real project repositories. The opt-in GitHub driver uses only uniquely named
 | Already-pushed thread branch | Exclude it from later ship sets |
 | Multiple branches, one remote | Push with one atomic group |
 | Multiple repos/remotes | Preflight separately and report non-atomic delivery |
+| Cross-repo second push fails | Preserve the first success and report the rejected group as failed |
+| Remote advances after preflight | Reject the stale push and return `fetch_and_replan` |
+| Missing verification | Block until a current check or explicit `not_applicable` is recorded |
+| Later verification supersedes failure | Use the latest command/scope result and retain full history |
+| Multiple blockers | Return all applicable blockers and a stable primary action |
+| Branch in another worktree | Rebase in its clean owning worktree without repurposing it |
+| Private checkpoint refs | Never include them in any remote push |
 | Push report | Include final branch status and divergence handling |
 | Merge plan | Include target, strategy, dependencies, verification, and risk |
 | Verification bound to old HEAD | Block ship until the check is rerun |
@@ -58,6 +67,15 @@ Run the full matrix with:
 
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+Run the quantified acceptance model, including evidence validation, the full
+local suite, structural budgets, and hot-path benchmarks, with:
+
+```bash
+python3 scripts/verify_acceptance.py \
+  --remote-evidence acceptance/evidence/github-collaboration-final.json \
+  --output acceptance/results.json
 ```
 
 Run the opt-in real-remote collaboration matrix with:
