@@ -1,7 +1,8 @@
 # Checkpoint Thread Test Matrix
 
 The lab uses disposable Git repositories and local bare remotes. It never touches
-real project repositories or network remotes.
+real project repositories. The opt-in GitHub driver uses only uniquely named
+`collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
 ## Lifecycle and state
 
@@ -57,4 +58,13 @@ Run the full matrix with:
 
 ```bash
 python3 -m unittest discover -s tests -v
+```
+
+Run the opt-in real-remote collaboration matrix with:
+
+```bash
+python3 scripts/run_github_collaboration_lab.py \
+  --remote git@github.com:OWNER/checkpoint-thread-lab.git \
+  --allow-remote-mutation \
+  --report work/github-collaboration-report.json
 ```
