@@ -179,7 +179,10 @@ class CollaborationAndShippingTests(unittest.TestCase):
             "--format=%(refname)",
             f"refs/codex/checkpoint-thread/{self.ledger_id}/main/",
         ).stdout.splitlines()
-        self.assertTrue(any("pre-rebase" in ref for ref in safety_refs))
+        self.assertEqual([], safety_refs)
+        self.assertIn(
+            handling["safety_ref"], result["branches"][0]["pruned_recovery_refs"]
+        )
 
     def test_ship_plan_blocks_local_commits_not_owned_by_the_thread(self) -> None:
         (self.repo / "preexisting.txt").write_text("before thread\n", encoding="utf-8")
@@ -203,7 +206,7 @@ class CollaborationAndShippingTests(unittest.TestCase):
 
         branch = result["branches"][0]
         self.assertEqual("blocked", branch["push_status"])
-        self.assertEqual("unowned_local_commits", branch["ownership_status"])
+        self.assertEqual("unattributed_local_commits", branch["attribution_status"])
         self.assertEqual(
             "separate_or_confirm_local_commits", branch["divergence_solution"]
         )
@@ -246,8 +249,8 @@ class CollaborationAndShippingTests(unittest.TestCase):
         branch = result["branches"][0]
         self.assertEqual("new", branch["remote_state"])
         self.assertEqual("blocked", branch["push_status"])
-        self.assertEqual("unowned_local_commits", branch["ownership_status"])
-        self.assertEqual(1, len(branch["unowned_local_commits"]))
+        self.assertEqual("unattributed_local_commits", branch["attribution_status"])
+        self.assertEqual(1, len(branch["unattributed_local_commits"]))
 
     def test_ship_plan_blocks_until_provisional_checkpoints_are_resolved(self) -> None:
         (self.repo / "confirmed.txt").write_text("confirmed\n", encoding="utf-8")

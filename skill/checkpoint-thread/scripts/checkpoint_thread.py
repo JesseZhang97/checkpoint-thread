@@ -360,7 +360,8 @@ def save_ledger(
     state_oid: str | None = None,
     status: str = "completed",
     detail: dict[str, Any] | None = None,
-) -> str:
+    record_event: bool = True,
+) -> str | None:
     global LAST_EVENT_ID
     if ACTIVE_REPO is not None:
         if repo_id is None:
@@ -373,10 +374,9 @@ def save_ledger(
             with contextlib.suppress(CheckpointError):
                 head = head_sha(ACTIVE_REPO)
     try:
-        event_id = ControlPlane(root).save(
-            ledger_id,
-            ledger,
-            event={
+        event = None
+        if record_event:
+            event = {
                 "operation": operation or ACTIVE_COMMAND or "state_saved",
                 "repo_id": repo_id,
                 "branch": branch,
@@ -384,41 +384,86 @@ def save_ledger(
                 "state_oid": state_oid or ACTIVE_STATE_OID,
                 "status": status,
                 "detail": detail or {},
-            },
+            }
+        event_id = ControlPlane(root).save(
+            ledger_id,
+            ledger,
+            event=event,
         )
     except ControlPlaneError as error:
         raise CheckpointError(error.code, **error.details) from error
-    assert event_id is not None
     LAST_EVENT_ID = event_id
     return event_id
 
 
-def ensure_branch_claim(
-    ledger_root: Path, ledger_id: str, root: Path, branch: str
-) -> dict[str, Any]:
-    repo_id = repo_id_for(common_git_dir(root))
-    try:
-        return ControlPlane(ledger_root).acquire_claim(
-            ledger_id=ledger_id,
-            repo_id=repo_id,
-            branch=branch,
-            repo_root=str(root),
-        )
-    except ControlPlaneError as error:
-        raise CheckpointError(error.code, **error.details) from error
+def attribution_state(branch_entry: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    contributions = branch_entry.setdefault("contributions", [])
+    goal_sequence = int(branch_entry.setdefault("goal_sequence", 1))
+    goal_id = branch_entry.setdefault("active_goal_id", f"goal-{goal_sequence:04d}")
+    return goal_id, contributions
 
 
-def release_branch_claim(
-    ledger_root: Path, ledger_id: str, repo_id: str, branch: str
-) -> bool:
-    try:
-        return ControlPlane(ledger_root).release_claim(
-            ledger_id=ledger_id,
-            repo_id=repo_id,
-            branch=branch,
+def start_next_goal(branch_entry: dict[str, Any]) -> str:
+    sequence = int(branch_entry.setdefault("goal_sequence", 1)) + 1
+    branch_entry["goal_sequence"] = sequence
+    goal_id = f"goal-{sequence:04d}"
+    branch_entry["active_goal_id"] = goal_id
+    return goal_id
+
+
+def tree_changed_paths(root: Path, before: str, after: str) -> list[str]:
+    if before == after:
+        return []
+    return sorted(
+        nul_paths(
+            git(
+                root,
+                "diff-tree",
+                "-r",
+                "--no-commit-id",
+                "--name-only",
+                "-z",
+                before,
+                after,
+            )
         )
-    except ControlPlaneError as error:
-        raise CheckpointError(error.code, **error.details) from error
+    )
+
+
+def contribution_overlaps(
+    ledger_root: Path,
+    *,
+    ledger_id: str,
+    repo_id: str,
+    branch: str,
+    paths: Sequence[str],
+) -> list[dict[str, Any]]:
+    wanted = set(paths)
+    overlaps: list[dict[str, Any]] = []
+    inventory = ControlPlane(ledger_root).inventory()
+    for other_ledger_id, other_ledger in inventory["ledgers"].items():
+        if other_ledger_id == ledger_id:
+            continue
+        other_repo = other_ledger.get("repos", {}).get(repo_id)
+        other_branch = (
+            other_repo.get("branches", {}).get(branch) if other_repo else None
+        )
+        if not other_branch:
+            continue
+        for contribution in other_branch.get("contributions", []):
+            if contribution.get("status", "active") != "active":
+                continue
+            shared = sorted(wanted & set(contribution.get("paths", [])))
+            if shared:
+                overlaps.append(
+                    {
+                        "ledger_id": other_ledger_id,
+                        "contribution_id": contribution.get("id"),
+                        "goal_id": contribution.get("goal_id"),
+                        "paths": shared,
+                    }
+                )
+    return overlaps
 
 
 def find_repo_entry(ledger: dict[str, Any], root: Path) -> tuple[str, dict[str, Any]]:
@@ -472,43 +517,56 @@ def git_add_paths(
     git(root, *args, env=env, input_bytes=pathspec_bytes(paths))
 
 
-def capture_state(root: Path, large_file_limit: int) -> dict[str, Any]:
-    changes = ensure_clean_operation_state(root)
-    ignored = collect_ignored_paths(root)
-    secret = sorted(
-        path for path in set(sum(changes.values(), [])) if is_secret_path(path)
-    )
-    staged_secret = sorted(set(secret) & set(changes["staged"]))
-    if staged_secret:
-        raise CheckpointError(
-            "staged_secret_paths",
-            paths=staged_secret,
-            message="Remove secret paths from the index before capturing Git state.",
-        )
-    generated = sorted(
-        path for path in changes["untracked"] if is_generated_output(path)
-    )
-    large = large_untracked_paths(root, changes["untracked"], large_file_limit)
-    excluded_secret = sorted(
-        set(secret) & (set(changes["unstaged"]) | set(changes["untracked"]))
-    )
-    excluded = set(generated) | set(large) | set(excluded_secret)
-    index_tree = text(git(root, "write-tree"))
+@contextlib.contextmanager
+def repo_state_lock(root: Path) -> Iterator[None]:
+    lock_path = common_git_dir(root) / "codex-checkpoint-state.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
-    fd, temporary_index = tempfile.mkstemp(prefix="checkpoint-index-")
-    os.close(fd)
-    os.unlink(temporary_index)
-    temp_env = {"GIT_INDEX_FILE": temporary_index}
-    try:
-        git(root, "read-tree", index_tree, env=temp_env)
-        worktree_paths = sorted(
-            (set(changes["unstaged"]) | set(changes["untracked"])) - excluded
+
+def capture_state(root: Path, large_file_limit: int) -> dict[str, Any]:
+    with repo_state_lock(root):
+        changes = ensure_clean_operation_state(root)
+        ignored = collect_ignored_paths(root)
+        secret = sorted(
+            path for path in set(sum(changes.values(), [])) if is_secret_path(path)
         )
-        git_add_paths(root, worktree_paths, env=temp_env)
-        worktree_tree = text(git(root, "write-tree", env=temp_env))
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            os.unlink(temporary_index)
+        staged_secret = sorted(set(secret) & set(changes["staged"]))
+        if staged_secret:
+            raise CheckpointError(
+                "staged_secret_paths",
+                paths=staged_secret,
+                message="Remove secret paths from the index before capturing Git state.",
+            )
+        generated = sorted(
+            path for path in changes["untracked"] if is_generated_output(path)
+        )
+        large = large_untracked_paths(root, changes["untracked"], large_file_limit)
+        excluded_secret = sorted(
+            set(secret) & (set(changes["unstaged"]) | set(changes["untracked"]))
+        )
+        excluded = set(generated) | set(large) | set(excluded_secret)
+        index_tree = text(git(root, "write-tree"))
+
+        fd, temporary_index = tempfile.mkstemp(prefix="checkpoint-index-")
+        os.close(fd)
+        os.unlink(temporary_index)
+        temp_env = {"GIT_INDEX_FILE": temporary_index}
+        try:
+            git(root, "read-tree", index_tree, env=temp_env)
+            worktree_paths = sorted(
+                (set(changes["unstaged"]) | set(changes["untracked"])) - excluded
+            )
+            git_add_paths(root, worktree_paths, env=temp_env)
+            worktree_tree = text(git(root, "write-tree", env=temp_env))
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary_index)
 
     return {
         "changes": changes,
@@ -597,9 +655,14 @@ def command_enter(args: argparse.Namespace) -> dict[str, Any]:
             worktree_entry["branches"].sort()
         existing = repo_entry["branches"].get(branch)
         if existing is not None:
-            claim = ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
             existing["state"] = "active"
-            save_ledger(args.ledger_root, args.ledger_id, ledger)
+            goal_id, contributions = attribution_state(existing)
+            save_ledger(
+                args.ledger_root,
+                args.ledger_id,
+                ledger,
+                record_event=False,
+            )
             return {
                 "ok": True,
                 "action": "already_active",
@@ -609,12 +672,13 @@ def command_enter(args: argparse.Namespace) -> dict[str, Any]:
                 "branch": branch,
                 "head": existing["baseline_head"],
                 "baseline_ref": existing["baseline_ref"],
-                "claim": claim,
+                "active_goal_id": goal_id,
+                "contribution_count": len(contributions),
             }
 
-        claim = ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         branch_entry = {
             "branch": branch,
+            "state": "active",
             "baseline_head": head_sha(root),
             "baseline_ref": None,
             "upstream": upstream_name(root, branch),
@@ -623,22 +687,20 @@ def command_enter(args: argparse.Namespace) -> dict[str, Any]:
             "checkpoints": [],
             "thread_commits": [],
             "verification": [],
+            "contributions": [],
+            "goal_sequence": 1,
+            "active_goal_id": "goal-0001",
         }
         repo_entry["branches"][branch] = branch_entry
-        try:
-            checkpoint = snapshot_internal(
-                ledger=ledger,
-                ledger_id=args.ledger_id,
-                root=root,
-                branch=branch,
-                kind="baseline",
-                reason="thread baseline",
-                large_file_limit=args.large_file_limit,
-            )
-        except Exception:
-            if claim["action"] == "acquired":
-                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
-            raise
+        checkpoint = snapshot_internal(
+            ledger=ledger,
+            ledger_id=args.ledger_id,
+            root=root,
+            branch=branch,
+            kind="baseline",
+            reason="thread baseline",
+            large_file_limit=args.large_file_limit,
+        )
         branch_entry["baseline_ref"] = checkpoint["ref"]
         branch_entry["preflight"] = {
             "checked_at": checkpoint["created_at"],
@@ -669,7 +731,7 @@ def command_enter(args: argparse.Namespace) -> dict[str, Any]:
             "baseline_ref": checkpoint["ref"],
             "baseline_complete": checkpoint["complete"],
             "preflight": branch_entry["preflight"],
-            "claim": claim,
+            "active_goal_id": branch_entry["active_goal_id"],
         }
 
 
@@ -682,6 +744,35 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
     repo_id = repo_id_for(common_git_dir(root))
     repo_entry = ledger["repos"].get(repo_id)
     branch_registered = bool(repo_entry and branch in repo_entry["branches"])
+    branch_entry = repo_entry["branches"].get(branch) if repo_entry else None
+    contributions = branch_entry.get("contributions", []) if branch_entry else []
+    active_contributions = [
+        contribution
+        for contribution in contributions
+        if contribution.get("status", "active") == "active"
+    ]
+    changed_paths = set(
+        changes["staged"]
+        + changes["unstaged"]
+        + changes["untracked"]
+        + changes["unmerged"]
+    )
+    attributed_paths = sorted(
+        changed_paths
+        & {
+            path
+            for contribution in active_contributions
+            for path in contribution.get("paths", [])
+        }
+    )
+    overlap_paths = sorted(
+        {
+            path
+            for contribution in active_contributions
+            for overlap in contribution.get("overlaps", [])
+            for path in overlap.get("paths", [])
+        }
+    )
     if changes["unmerged"] or operation:
         action = "blocked"
     elif not ledger["repos"]:
@@ -698,6 +789,13 @@ def command_status(args: argparse.Namespace) -> dict[str, Any]:
         "repo_id": repo_id,
         "branch": branch,
         "branch_registered": branch_registered,
+        "active_goal_id": (
+            branch_entry.get("active_goal_id") if branch_entry else None
+        ),
+        "active_contributions": active_contributions,
+        "attributed_paths": attributed_paths,
+        "unattributed_paths": sorted(changed_paths - set(attributed_paths)),
+        "overlap_paths": overlap_paths,
         "operation": operation,
         "changes": changes,
     }
@@ -713,112 +811,123 @@ def command_guard(args: argparse.Namespace) -> dict[str, Any]:
             operation=status["operation"],
             changes=status["changes"],
         )
+    entered = None
     if status["action"] in {"enter", "enroll"}:
         entered = command_enter(args)
-        return {
-            "ok": True,
-            "action": "allowed",
-            "guard": "entered",
-            "enter": entered,
-            "repo": entered["repo"],
-            "repo_id": entered["repo_id"],
-            "branch": entered["branch"],
-        }
     root = repo_root(args.repo)
-    claim = ensure_branch_claim(
-        args.ledger_root,
-        args.ledger_id,
-        root,
-        status["branch"],
-    )
-    with ledger_lock(args.ledger_root, args.ledger_id):
-        ledger = load_ledger(args.ledger_root, args.ledger_id)
-        _, _, branch_entry = find_branch_entry(ledger, root, status["branch"])
-        branch_entry["state"] = "active"
-        save_ledger(
-            args.ledger_root,
-            args.ledger_id,
-            ledger,
-            operation="guard",
+    state = capture_state(root, args.large_file_limit)
+    if args.span_id:
+        ControlPlane(args.ledger_root).start_span(
+            ledger_id=args.ledger_id,
+            span_id=args.span_id,
             repo_id=status["repo_id"],
             branch=status["branch"],
-            head=head_sha(root),
+            before_state_oid=state["state_oid"],
         )
     return {
         "ok": True,
         "action": "allowed",
-        "guard": "active",
+        "guard": "entered" if entered else "observed",
         "repo": status["repo"],
         "repo_id": status["repo_id"],
         "branch": status["branch"],
-        "claim": claim,
+        "span_id": args.span_id,
+        "before_state_oid": state["state_oid"],
+        **({"enter": entered} if entered else {}),
     }
 
 
 def command_settle(args: argparse.Namespace) -> dict[str, Any]:
     root = repo_root(args.repo)
     branch = current_branch(root)
-    changes = collect_changes(root)
-    operation = operation_state(root)
+    if not args.span_id:
+        return {
+            "ok": True,
+            "action": "no_span",
+            "repo": str(root),
+            "branch": branch,
+        }
+    span = ControlPlane(args.ledger_root).pop_span(
+        ledger_id=args.ledger_id,
+        span_id=args.span_id,
+    )
+    if span is None:
+        return {
+            "ok": True,
+            "action": "span_missing",
+            "repo": str(root),
+            "branch": branch,
+            "span_id": args.span_id,
+        }
+    repo_id = repo_id_for(common_git_dir(root))
+    if span["repo_id"] != repo_id or span["branch"] != branch:
+        raise CheckpointError(
+            "hook_span_context_changed",
+            span_id=args.span_id,
+            before_repo_id=span["repo_id"],
+            after_repo_id=repo_id,
+            before_branch=span["branch"],
+            after_branch=branch,
+        )
+    state = capture_state(root, args.large_file_limit)
+    paths = tree_changed_paths(root, span["before_state_oid"], state["state_oid"])
+    if not paths:
+        return {
+            "ok": True,
+            "action": "no_change",
+            "repo": str(root),
+            "repo_id": repo_id,
+            "branch": branch,
+            "span_id": args.span_id,
+        }
+    overlaps = contribution_overlaps(
+        args.ledger_root,
+        ledger_id=args.ledger_id,
+        repo_id=repo_id,
+        branch=branch,
+        paths=paths,
+    )
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
-        repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
-        unresolved = [
-            checkpoint["ref"]
-            for checkpoint in branch_entry["checkpoints"]
-            if checkpoint["kind"] != "baseline" and not checkpoint.get("resolution")
-        ]
-        latest_commit = (
-            branch_entry["thread_commits"][-1]["commit"]
-            if branch_entry["thread_commits"]
-            else None
-        )
-        unpublished = bool(
-            latest_commit
-            and latest_commit
-            not in {
-                branch_entry.get("last_shipped_commit"),
-                branch_entry.get("last_released_commit"),
-            }
-        )
-        dirty = any(
-            changes[key] for key in ("staged", "unstaged", "untracked", "unmerged")
-        )
-        blockers = []
-        if operation:
-            blockers.append("git_operation_in_progress")
-        if dirty:
-            blockers.append("worktree_dirty")
-        if unresolved:
-            blockers.append("unresolved_checkpoints")
-        if unpublished:
-            blockers.append("unpublished_thread_commits")
+        _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        goal_id, contributions = attribution_state(branch_entry)
+        contribution = {
+            "id": hashlib.sha256(
+                f"{args.ledger_id}\0{args.span_id}\0{state['state_oid']}".encode()
+            ).hexdigest()[:20],
+            "goal_id": goal_id,
+            "recorded_at": now_iso(),
+            "before_state_oid": span["before_state_oid"],
+            "after_state_oid": state["state_oid"],
+            "paths": paths,
+            "overlaps": overlaps,
+            "status": "active",
+        }
+        contributions.append(contribution)
         save_ledger(
             args.ledger_root,
             args.ledger_id,
             ledger,
-            operation="settle",
+            operation="contribution",
             repo_id=repo_id,
             branch=branch,
             head=head_sha(root),
-            detail={"blockers": blockers},
+            state_oid=state["state_oid"],
+            detail={
+                "contribution_id": contribution["id"],
+                "goal_id": goal_id,
+                "paths": paths,
+                "overlaps": overlaps,
+            },
         )
-        released = False
-        if not blockers:
-            released = release_branch_claim(
-                args.ledger_root,
-                args.ledger_id,
-                repo_id,
-                branch,
-            )
         return {
             "ok": True,
-            "action": "claim_released" if released else "claim_retained",
+            "action": "attributed",
             "repo": str(root),
             "repo_id": repo_id,
             "branch": branch,
-            "blockers": blockers,
-            "unresolved_checkpoints": unresolved,
+            "span_id": args.span_id,
+            "contribution": contribution,
         }
 
 
@@ -831,7 +940,6 @@ def command_close(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         unresolved = [
             checkpoint["ref"]
             for checkpoint in branch_entry["checkpoints"]
@@ -862,12 +970,6 @@ def command_close(args: argparse.Namespace) -> dict[str, Any]:
             head=head_sha(root),
             detail={"latest_commit": latest_commit, "reason": args.reason},
         )
-        released = release_branch_claim(
-            args.ledger_root,
-            args.ledger_id,
-            repo_id,
-            branch,
-        )
         return {
             "ok": True,
             "action": "closed_local",
@@ -875,7 +977,6 @@ def command_close(args: argparse.Namespace) -> dict[str, Any]:
             "repo_id": repo_id,
             "branch": branch,
             "latest_commit": latest_commit,
-            "claim_released": released,
         }
 
 
@@ -885,7 +986,8 @@ def command_snapshot(args: argparse.Namespace) -> dict[str, Any]:
     branch = current_branch(root)
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+        _, _, branch_entry = find_branch_entry(ledger, root, branch)
+        goal_id, _ = attribution_state(branch_entry)
         checkpoint = snapshot_internal(
             ledger=ledger,
             ledger_id=args.ledger_id,
@@ -895,6 +997,9 @@ def command_snapshot(args: argparse.Namespace) -> dict[str, Any]:
             reason=args.reason,
             large_file_limit=args.large_file_limit,
         )
+        checkpoint["goal_id"] = goal_id
+        if args.kind == "provisional":
+            checkpoint["next_goal_id"] = start_next_goal(branch_entry)
         save_ledger(args.ledger_root, args.ledger_id, ledger)
         return {"ok": True, **checkpoint}
 
@@ -921,8 +1026,7 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
     original_changes = ensure_clean_operation_state(root)
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
-        repo_id, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+        _, _, branch_entry = find_branch_entry(ledger, root, branch)
         checkpoint = snapshot_internal(
             ledger=ledger,
             ledger_id=args.ledger_id,
@@ -932,8 +1036,24 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
             reason=args.reason,
             large_file_limit=args.large_file_limit,
         )
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            record_event=False,
+        )
         if not checkpoint["complete"]:
+            save_ledger(
+                args.ledger_root,
+                args.ledger_id,
+                ledger,
+                operation="park",
+                status="failed",
+                detail={
+                    "reason": "snapshot_incomplete",
+                    "checkpoint_ref": checkpoint["ref"],
+                },
+            )
             raise CheckpointError(
                 "snapshot_incomplete",
                 ref=checkpoint["ref"],
@@ -975,8 +1095,13 @@ def command_park(args: argparse.Namespace) -> dict[str, Any]:
             )
         branch_entry["parked_ref"] = checkpoint["ref"]
         branch_entry["state"] = "parked"
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
-        release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="park",
+            detail={"checkpoint_ref": checkpoint["ref"]},
+        )
         return {
             "ok": True,
             "action": "parked",
@@ -993,6 +1118,26 @@ def checkpoint_for_ref(branch_entry: dict[str, Any], ref: str) -> dict[str, Any]
     raise CheckpointError("checkpoint_ref_not_in_ledger", ref=ref)
 
 
+def prune_branch_recovery_refs(root: Path, branch_entry: dict[str, Any]) -> list[str]:
+    pruned: list[str] = []
+    timestamp = now_iso()
+    for checkpoint in branch_entry.get("checkpoints", []):
+        ref = checkpoint.get("ref")
+        if ref and ref_exists(root, ref):
+            git(root, "update-ref", "-d", ref)
+            pruned.append(ref)
+        if ref:
+            checkpoint["pruned_at"] = timestamp
+    for safety in branch_entry.get("history_safety_refs", []):
+        ref = safety.get("ref")
+        if ref and ref_exists(root, ref):
+            git(root, "update-ref", "-d", ref)
+            pruned.append(ref)
+        if ref:
+            safety["pruned_at"] = timestamp
+    return pruned
+
+
 def command_restore(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm:
         raise CheckpointError("restore_requires_confirmation", ref=args.ref)
@@ -1004,7 +1149,6 @@ def command_restore(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = checkpoint_for_ref(branch_entry, args.ref)
         if not checkpoint["complete"]:
             raise CheckpointError(
@@ -1061,7 +1205,13 @@ def command_restore(args: argparse.Namespace) -> dict[str, Any]:
         git(root, "read-tree", checkpoint["index_commit"])
         branch_entry["state"] = "active"
         branch_entry["restored_ref"] = args.ref
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            operation="restore",
+            detail={"checkpoint_ref": args.ref, "paths": restore_paths},
+        )
         return {
             "ok": True,
             "action": "restored",
@@ -1128,7 +1278,19 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
+        goal_id, contributions = attribution_state(branch_entry)
+        selected_contributions = [
+            contribution
+            for contribution in contributions
+            if contribution.get("status", "active") == "active"
+            and selected_set & set(contribution.get("paths", []))
+        ]
+        overlap_warnings = [
+            overlap
+            for contribution in selected_contributions
+            for overlap in contribution.get("overlaps", [])
+            if selected_set & set(overlap.get("paths", []))
+        ]
         preexisting = set(branch_entry["initial_changes"]["staged"])
         preexisting |= set(branch_entry["initial_changes"]["unstaged"])
         preexisting |= set(branch_entry["initial_changes"]["untracked"])
@@ -1145,7 +1307,12 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             reason=f"promotion: {args.acceptance_source}",
             large_file_limit=args.large_file_limit,
         )
-        save_ledger(args.ledger_root, args.ledger_id, ledger)
+        save_ledger(
+            args.ledger_root,
+            args.ledger_id,
+            ledger,
+            record_event=False,
+        )
         intent_paths = [
             path
             for path in untracked_selected
@@ -1172,7 +1339,17 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
         if failed_diff_checks:
             if intent_paths:
                 git(root, "reset", "-q", "--", *intent_paths, check=False)
-            save_ledger(args.ledger_root, args.ledger_id, ledger)
+            save_ledger(
+                args.ledger_root,
+                args.ledger_id,
+                ledger,
+                operation="promote",
+                status="failed",
+                detail={
+                    "reason": "diff_check_failed",
+                    "checkpoint_ref": checkpoint["ref"],
+                },
+            )
             raise CheckpointError(
                 "diff_check_failed",
                 details="\n".join(
@@ -1195,7 +1372,17 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
         if commit.returncode != 0:
             if intent_paths:
                 git(root, "reset", "-q", "--", *intent_paths, check=False)
-            save_ledger(args.ledger_root, args.ledger_id, ledger)
+            save_ledger(
+                args.ledger_root,
+                args.ledger_id,
+                ledger,
+                operation="promote",
+                status="failed",
+                detail={
+                    "reason": "commit_failed",
+                    "checkpoint_ref": checkpoint["ref"],
+                },
+            )
             raise CheckpointError(
                 "commit_failed",
                 checkpoint_ref=checkpoint["ref"],
@@ -1207,6 +1394,10 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             "commit": commit_sha,
             "message": args.message,
             "paths": selected,
+            "goal_id": goal_id,
+            "contribution_ids": [
+                contribution["id"] for contribution in selected_contributions
+            ],
             "acceptance_source": args.acceptance_source,
             "checkpoint_ref": checkpoint["ref"],
             "created_at": now_iso(),
@@ -1226,6 +1417,19 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
                     verification["verified_commit"] = commit_sha
                     carried_verifications.append(verification["command"])
         branch_entry["thread_commits"].append(record)
+        for contribution in selected_contributions:
+            contribution_paths = set(contribution.get("paths", []))
+            committed_paths = sorted(contribution_paths & selected_set)
+            remaining_paths = sorted(contribution_paths - selected_set)
+            contribution["committed_paths"] = committed_paths
+            contribution["commit"] = commit_sha
+            if remaining_paths:
+                contribution["paths"] = remaining_paths
+                contribution["remaining_paths"] = remaining_paths
+                contribution["status"] = "active"
+            else:
+                contribution["status"] = "committed"
+        next_goal_id = start_next_goal(branch_entry)
         save_ledger(
             args.ledger_root,
             args.ledger_id,
@@ -1233,7 +1437,13 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             operation="promote",
             head=commit_sha,
             state_oid=checkpoint.get("state_oid"),
-            detail={"paths": selected, "carried_verifications": carried_verifications},
+            detail={
+                "paths": selected,
+                "goal_id": goal_id,
+                "contribution_ids": record["contribution_ids"],
+                "overlap_warnings": overlap_warnings,
+                "carried_verifications": carried_verifications,
+            },
         )
         return {
             "ok": True,
@@ -1242,6 +1452,10 @@ def command_promote(args: argparse.Namespace) -> dict[str, Any]:
             "branch": branch,
             "commit": commit_sha,
             "paths": selected,
+            "goal_id": goal_id,
+            "next_goal_id": next_goal_id,
+            "contribution_ids": record["contribution_ids"],
+            "overlap_warnings": overlap_warnings,
             "checkpoint_ref": checkpoint["ref"],
             "carried_verifications": carried_verifications,
         }
@@ -1253,7 +1467,6 @@ def command_resolve_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         checkpoint = checkpoint_for_ref(branch_entry, args.ref)
         if checkpoint["kind"] == "baseline":
             raise CheckpointError("baseline_cannot_be_resolved", ref=args.ref)
@@ -1279,7 +1492,6 @@ def command_record_verification(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         _, _, branch_entry = find_branch_entry(ledger, root, branch)
-        ensure_branch_claim(args.ledger_root, args.ledger_id, root, branch)
         state = capture_state(root, args.large_file_limit)
         record = {
             "command": args.verification_command,
@@ -1484,9 +1696,9 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
             remote_ref = f"refs/remotes/{remote}/{remote_branch}" if remote else None
             local_tip = text(git(root, "rev-parse", local_ref))
             conflict_paths: list[str] = []
-            unowned_local_commits: list[str] = []
-            ownership_status = "thread_owned"
-            owned = {item["commit"] for item in entry["thread_commits"]}
+            unattributed_local_commits: list[str] = []
+            attribution_status = "thread_attributed"
+            attributed = {item["commit"] for item in entry["thread_commits"]}
             unpublished_thread_commits: list[str] = []
             ahead = 0
             behind = 0
@@ -1502,7 +1714,7 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                 push_status = "ready"
                 solution = "push_new_branch"
                 local_unpublished = commits_not_on_remote(root, local_ref, remote)
-                unowned_local_commits = sorted(set(local_unpublished) - owned)
+                unattributed_local_commits = sorted(set(local_unpublished) - attributed)
                 unpublished_thread_commits = [
                     item["commit"] for item in entry["thread_commits"]
                 ]
@@ -1511,7 +1723,7 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                 behind = rev_count(root, f"{local_ref}..{remote_ref}")
                 local_only = rev_list(root, f"{remote_ref}..{local_ref}")
                 local_unpublished = commits_not_on_remote(root, local_ref, remote)
-                unowned_local_commits = sorted(set(local_unpublished) - owned)
+                unattributed_local_commits = sorted(set(local_unpublished) - attributed)
                 unpublished_thread_commits = [
                     item["commit"]
                     for item in entry["thread_commits"]
@@ -1552,11 +1764,11 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     push_status = "ready"
                     solution = "none"
             blockers = [solution] if push_status == "blocked" else []
-            if unowned_local_commits:
-                ownership_status = "unowned_local_commits"
+            if unattributed_local_commits:
+                attribution_status = "unattributed_local_commits"
             if not unresolved and not unpublished_thread_commits:
                 continue
-            if ownership_status == "unowned_local_commits":
+            if attribution_status == "unattributed_local_commits":
                 blockers.append("separate_or_confirm_local_commits")
             worktree = branch_worktree(root, branch)
             worktree_dirty = False
@@ -1628,8 +1840,8 @@ def build_ship_plan(ledger: dict[str, Any], *, fetch: bool) -> dict[str, Any]:
                     "push_status": push_status,
                     "divergence_solution": solution,
                     "blockers": blockers,
-                    "ownership_status": ownership_status,
-                    "unowned_local_commits": unowned_local_commits,
+                    "attribution_status": attribution_status,
+                    "unattributed_local_commits": unattributed_local_commits,
                     "unresolved_checkpoints": unresolved,
                     "worktree_dirty": worktree_dirty,
                     "verification": verification,
@@ -1699,7 +1911,7 @@ def branch_worktree(root: Path, branch: str) -> Path | None:
     return None
 
 
-def rebase_thread_owned_branch(
+def rebase_thread_attributed_branch(
     ledger: dict[str, Any], ledger_id: str, branch_plan: dict[str, Any]
 ) -> dict[str, Any]:
     root = Path(branch_plan["repo"])
@@ -1815,12 +2027,12 @@ def prepare_rebases(
     for branch in plan["branches"]:
         if (
             branch["remote_state"] == "diverged"
-            and branch["ownership_status"] == "thread_owned"
+            and branch["attribution_status"] == "thread_attributed"
             and not branch["conflict_paths"]
             and branch["blockers"] == ["rebase_onto_upstream"]
         ):
             key = (branch["repo_id"], branch["branch"])
-            receipts[key] = rebase_thread_owned_branch(ledger, ledger_id, branch)
+            receipts[key] = rebase_thread_attributed_branch(ledger, ledger_id, branch)
     return receipts
 
 
@@ -1828,24 +2040,14 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
     with ledger_lock(args.ledger_root, args.ledger_id):
         ledger = load_ledger(args.ledger_root, args.ledger_id)
         plan = build_ship_plan(ledger, fetch=args.fetch)
-        newly_acquired: list[tuple[str, str]] = []
-        try:
-            for item in plan["branches"]:
-                claim = ensure_branch_claim(
-                    args.ledger_root,
-                    args.ledger_id,
-                    Path(item["repo"]),
-                    item["branch"],
-                )
-                if claim["action"] == "acquired":
-                    newly_acquired.append((item["repo_id"], item["branch"]))
-        except CheckpointError:
-            for repo_id, branch in newly_acquired:
-                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
-            raise
         rebase_receipts = prepare_rebases(ledger, args.ledger_id, plan)
         if rebase_receipts:
-            save_ledger(args.ledger_root, args.ledger_id, ledger)
+            save_ledger(
+                args.ledger_root,
+                args.ledger_id,
+                ledger,
+                record_event=False,
+            )
             plan = build_ship_plan(ledger, fetch=False)
         for item in plan["branches"]:
             key = (item["repo_id"], item["branch"])
@@ -1858,8 +2060,6 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
             )
             item["push_mode"] = "not_started"
         if not plan["all_ready"]:
-            for repo_id, branch in newly_acquired:
-                release_branch_claim(args.ledger_root, args.ledger_id, repo_id, branch)
             raise CheckpointError(
                 "ship_preflight_blocked",
                 branches=plan["branches"],
@@ -1899,7 +2099,18 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
                     ],
                 }
                 ledger["last_ship_failure"] = failure
-                save_ledger(args.ledger_root, args.ledger_id, ledger)
+                save_ledger(
+                    args.ledger_root,
+                    args.ledger_id,
+                    ledger,
+                    operation="ship",
+                    status="failed",
+                    detail={
+                        "remote": group["remote"],
+                        "branches": group["branches"],
+                        "atomic": group["atomic"],
+                    },
+                )
                 raise CheckpointError(
                     "push_failed",
                     repo=str(root),
@@ -1932,6 +2143,9 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
                 branch_entry = repo_entry["branches"][item["branch"]]
                 branch_entry["last_shipped_commit"] = item["local_tip"]
                 branch_entry["state"] = "shipped"
+                item["pruned_recovery_refs"] = prune_branch_recovery_refs(
+                    Path(repo_entry["root"]), branch_entry
+                )
         save_ledger(
             args.ledger_root,
             args.ledger_id,
@@ -1939,14 +2153,6 @@ def command_ship(args: argparse.Namespace) -> dict[str, Any]:
             operation="ship",
             detail={"branch_count": len(plan["branches"])},
         )
-        for item in plan["branches"]:
-            if item["push_status"] == "pushed":
-                release_branch_claim(
-                    args.ledger_root,
-                    args.ledger_id,
-                    item["repo_id"],
-                    item["branch"],
-                )
         return plan
 
 
@@ -1959,19 +2165,11 @@ def command_inspect(args: argparse.Namespace) -> dict[str, Any]:
         root = Path(entry["root"])
         branches = []
         for branch_name, branch_entry in sorted(entry["branches"].items()):
-            claim = control_plane.claim(repo_id=entry["id"], branch=branch_name)
-            if claim is not None and claim["ledger_id"] != args.ledger_id:
-                integrity_issues.append(
-                    {
-                        "type": "branch_claim_mismatch",
-                        "repo_id": entry["id"],
-                        "branch": branch_name,
-                        "owner_ledger_id": claim["ledger_id"],
-                    }
-                )
             missing_refs = []
             if root.exists():
                 for checkpoint in branch_entry["checkpoints"]:
+                    if checkpoint.get("pruned_at"):
+                        continue
                     if not ref_exists(root, checkpoint["ref"]):
                         missing_refs.append(checkpoint["ref"])
                         integrity_issues.append(
@@ -1993,8 +2191,9 @@ def command_inspect(args: argparse.Namespace) -> dict[str, Any]:
             branches.append(
                 {
                     "name": branch_name,
-                    "claim": claim,
                     "checkpoint_count": len(branch_entry["checkpoints"]),
+                    "active_goal_id": branch_entry.get("active_goal_id"),
+                    "contribution_count": len(branch_entry.get("contributions", [])),
                     "missing_refs": missing_refs,
                 }
             )
@@ -2047,6 +2246,8 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
             recorded = recorded_refs_by_repo.setdefault(root, set())
             for branch_entry in repo_entry["branches"].values():
                 for checkpoint in branch_entry["checkpoints"]:
+                    if checkpoint.get("pruned_at"):
+                        continue
                     recorded.add(checkpoint["ref"])
                     if root.exists() and not ref_exists(root, checkpoint["ref"]):
                         issues.append(
@@ -2058,19 +2259,14 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
                             }
                         )
                 for item in branch_entry.get("history_safety_refs", []):
+                    if item.get("pruned_at"):
+                        continue
                     recorded.add(item["ref"])
 
-    for claim in inventory["claims"]:
-        owner = ledgers.get(claim["ledger_id"])
-        branch_exists = bool(
-            owner
-            and claim["repo_id"] in owner["repos"]
-            and claim["branch"] in owner["repos"][claim["repo_id"]]["branches"]
-        )
-        if not branch_exists:
-            issues.append({"type": "orphan_branch_claim", **claim})
     for operation in inventory["incomplete_operations"]:
         issues.append({"type": "incomplete_operation", **operation})
+    for span in inventory["hook_spans"]:
+        issues.append({"type": "incomplete_hook_span", **span})
     for root, recorded in recorded_refs_by_repo.items():
         if not root.exists():
             continue
@@ -2093,7 +2289,7 @@ def command_doctor(args: argparse.Namespace) -> dict[str, Any]:
         "database_exists": control_plane.path.exists(),
         "database_integrity": database_integrity,
         "ledger_ids": sorted(ledger_ids),
-        "branch_claims": inventory["claims"],
+        "hook_spans": inventory["hook_spans"],
         "incomplete_operations": inventory["incomplete_operations"],
         "integrity": "ok" if not issues else "issues",
         "integrity_issues": issues,
@@ -2175,12 +2371,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     guard = subparsers.add_parser("guard")
     add_repo_argument(guard)
+    guard.add_argument("--span-id")
     guard.add_argument("--merge-target")
     guard.add_argument("--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT)
     guard.set_defaults(handler=command_guard)
 
     settle = subparsers.add_parser("settle")
     add_repo_argument(settle)
+    settle.add_argument("--span-id")
+    settle.add_argument(
+        "--large-file-limit", type=int, default=DEFAULT_LARGE_FILE_LIMIT
+    )
     settle.set_defaults(handler=command_settle)
 
     close = subparsers.add_parser("close")

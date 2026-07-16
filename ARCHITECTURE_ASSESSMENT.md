@@ -2,28 +2,29 @@
 
 ## Verdict
 
-V2 passes the lean-architecture and progressive-disclosure review. It adds a
-SQLite control plane and synchronous enforcement Hook without putting either in
-model context. The hot skill remains a compact policy router; deterministic code
-owns auditing, branch claims, exact state identity, recovery, and delivery.
+V2.1 passes only when both context load and persisted operational load are
+measured. SQLite is a provenance ledger, not a Git control plane: it attributes
+actual edits to threads and goals while Git remains the sole authority for
+content, branches, commits, and remotes. The Hook does not lock shared branches.
 
-This is the intended scale boundary: more runtime rigor, nearly unchanged model
-load. There is still no daemon, file watcher, semantic goal parser, or distributed
+This is the intended scale boundary: a compact model-facing router plus a safety
+kernel that records business-relevant state transitions. There is no daemon,
+file watcher, semantic goal parser, branch ownership protocol, or distributed
 coordinator.
 
 ## Quantified structure
 
 | Layer | Observed | Assessment |
 |---|---:|---|
-| Triggered `SKILL.md` | 99 lines, 649 words | Pass: within 100-line and 650-word budgets |
+| Triggered `SKILL.md` | 94 lines, 606 words | Pass: within 100-line and 650-word budgets |
 | Conditional references | 4 | Pass: exactly at the allowed count |
 | Reference depth | One hop from `SKILL.md` | Pass |
 | Reference payload | 122 lines, 783 words total | Pass: each file is 12-49 lines |
-| Lifecycle CLI | 2,345 lines, 5,864 words | Bundled and not model-loaded |
-| SQLite store | 459 lines, 1,306 words | Separate persistence boundary |
-| Pre/Post Hook | 242 lines, 598 words | Silent on allow; no model tokens |
+| Lifecycle CLI | 2,546 lines, 6,249 words | Bundled and not model-loaded |
+| SQLite store | 445 lines, 1,221 words | Separate persistence boundary |
+| Pre/Post Hook | 237 lines, 582 words | Silent on allow; no model tokens |
 | Skill package | 1 skill, 4 references, 2 scripts, 1 UI metadata file | Pass |
-| Acceptance suite | 102/102 scenarios, 75 tests | Original 80 plus 22 V2 scenarios |
+| Acceptance suite | 104 scenarios, 77 tests | Original 80 plus 24 V2.1 scenarios |
 
 The hot file is deliberately near its ceiling. New Git mechanics belong in code;
 rare policy belongs in an existing one-hop reference. A new hot-path concept must
@@ -38,10 +39,9 @@ automatic Hook fallback. Unrelated tasks see metadata only, not Git plumbing.
 
 ### Layer 2: hot workflow
 
-`SKILL.md` contains entry, dispatch, semantic goal boundary, authority, and
+`SKILL.md` contains entry, attribution, semantic goal boundary, authority, and
 receipt contracts. Read-only work creates no state. Same-goal continuation adds
-no agent-dispatched checkpoint or reference load; the silent Hook guard still
-enforces each recognized mutation.
+no agent-dispatched checkpoint or reference load.
 
 ### Layer 3: conditional policy
 
@@ -57,24 +57,37 @@ loading ship or topology policy on the common same-branch path.
 ### Layer 4: synchronous enforcement
 
 `PreToolUse` classifies tool calls, blocks direct history/delivery bypass, and
-runs `guard` before recognized mutations. `PostToolUse` settles clean no-op
-claims. Successful Hook calls emit nothing into context.
+stores one transient before-state. `PostToolUse` deletes the span and writes one
+contribution only when content changed. Successful Hook calls emit nothing into
+context.
 
 ### Layer 5: deterministic control and payload
 
 The CLI orchestrates lifecycle and Git operations. `checkpoint_store.py` owns
-SQLite schema, events, replay, claims, and integrity checks. Private Git
-refs hold recovery payloads. The model retains only semantic goal classification.
+SQLite state, milestone events, replay, transient Hook spans, and integrity
+checks. Private Git refs hold recovery payloads only until delivered. The model
+retains semantic goal classification and final attribution judgment.
 
 ## Runtime efficiency
 
 - Same-goal continuation: no agent-dispatched checkpoint command.
 - Read-only task: no ledger, database, ref, or reference load.
-- `status` p95: 191.78 ms against a 250 ms budget.
-- `enter` p95: 434.17 ms against a 750 ms budget.
-- `guard` p95: 244.45 ms against a 500 ms budget.
-- Pre/Post no-op round trip p95: 555.36 ms against a 1000 ms budget.
+- `status` p95: 170.33 ms against a 250 ms budget.
+- `enter` p95: 384.04 ms against a 750 ms budget.
+- `guard` p95: 322.27 ms against a 500 ms budget.
+- Pre/Post no-op round trip p95: 660.42 ms against a 1000 ms budget.
 - Repeated `enter` is idempotent; operation ids make retries replayable.
+
+## Persistence budgets
+
+- No-op Pre/Post Hook round trip: zero event rows and zero operation rows after
+  its transient span is removed.
+- Real Codex edit: one contribution and one contribution event, independent of
+  how many audit helpers ran.
+- Same branch: any number of thread ledgers may enter; shared paths produce
+  overlap evidence rather than a denial.
+- Successful ship: zero live recovery refs for the shipped ledger branch.
+- SQLite growth is O(real contributions + milestones), never O(all tool calls).
 
 ## Maintenance boundary
 
@@ -83,8 +96,8 @@ packages. Keep Git lifecycle orchestration together while its commands share the
 same invariants; split snapshot or delivery only if it gains an independent API
 or platform implementation.
 
-The remaining boundary is explicit: Hook enforcement covers Codex tool calls in
-their declared working repo, not human saves or external processes; SQLite
-coordinates one local ledger root, not multiple machines. Those limits avoid
-pretending a lightweight local skill is an operating-system sandbox or
+The remaining boundary is explicit: Hook attribution covers Codex tool calls in
+their declared working repo, not human saves or external processes. Those edits
+remain unattributed until commit selection. SQLite labels Git state transitions;
+it never becomes an alternate branch graph, operating-system sandbox, or
 distributed transaction service.

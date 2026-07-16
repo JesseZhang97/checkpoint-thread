@@ -103,7 +103,7 @@ class V2ControlPlaneTests(unittest.TestCase):
             },
             result["preflight"]["initial_changes"],
         )
-        self.assertEqual("acquired", result["claim"]["action"])
+        self.assertEqual("goal-0001", result["active_goal_id"])
         self.assertTrue(result["event_id"])
         ledger = load_ledger_state(self.ledgers, self.ledger_id)
         checkpoint = ledger["repos"][result["repo_id"]]["branches"]["main"][
@@ -243,7 +243,7 @@ class V2ControlPlaneTests(unittest.TestCase):
 
         self.assertEqual([], promoted["carried_verifications"])
 
-    def test_concurrent_threads_cannot_claim_the_same_branch(self) -> None:
+    def test_concurrent_threads_can_attribute_the_same_branch(self) -> None:
         run_cli(self.ledgers, "configure-only", "status", self.repo)
         commands = []
         for ledger_id in ("thread-a", "thread-b"):
@@ -272,18 +272,17 @@ class V2ControlPlaneTests(unittest.TestCase):
         codes = [process.returncode for process in processes]
         payloads = [json.loads(stdout) for stdout, _ in results]
 
-        self.assertEqual([0, 2], sorted(codes))
-        loser = next(payload for payload in payloads if payload["ok"] is False)
-        self.assertEqual("branch_claimed", loser["error"])
+        self.assertEqual([0, 0], sorted(codes))
+        self.assertTrue(all(payload["ok"] for payload in payloads))
         refs = git(
             self.repo,
             "for-each-ref",
             "--format=%(refname)",
             "refs/codex/checkpoint-thread/",
         ).stdout.splitlines()
-        self.assertEqual(1, len(refs))
+        self.assertEqual(2, len(refs))
 
-    def test_park_releases_the_branch_for_another_thread(self) -> None:
+    def test_park_does_not_gate_another_thread_on_the_branch(self) -> None:
         run_cli(self.ledgers, "thread-a", "enter", self.repo)
         (self.repo / "app.txt").write_text("park me\n", encoding="utf-8")
         run_cli(
@@ -298,7 +297,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         entered = run_cli(self.ledgers, "thread-b", "enter", self.repo)
 
         self.assertEqual("entered", entered["action"])
-        self.assertEqual("acquired", entered["claim"]["action"])
+        self.assertEqual("goal-0001", entered["active_goal_id"])
 
     def test_completed_operation_id_replays_without_duplicate_event(self) -> None:
         first = run_cli(
@@ -422,52 +421,96 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
         self.assertIn("ledger_root_not_configured", reason)
 
-    def test_hook_denies_a_second_thread_claiming_the_same_branch(self) -> None:
+    def test_hook_allows_a_second_thread_on_the_same_branch(self) -> None:
         first = self.run_hook(self.mutation_payload("hook-a", "hook-call-a"))
         second = self.run_hook(self.mutation_payload("hook-b", "hook-call-b"))
 
         self.assertEqual("", first.stdout)
-        payload = json.loads(second.stdout)
-        self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
-        self.assertIn(
-            "branch_claimed",
-            payload["hookSpecificOutput"]["permissionDecisionReason"],
+        self.assertEqual("", second.stdout)
+        self.assertEqual(
+            "hook-a", load_ledger_state(self.ledgers, "hook-a")["ledger_id"]
         )
-        self.assertIn(
-            "ledger_id=hook-b",
-            payload["hookSpecificOutput"]["permissionDecisionReason"],
-        )
-        self.assertIn(
-            "owner_ledger_id=hook-a",
-            payload["hookSpecificOutput"]["permissionDecisionReason"],
+        self.assertEqual(
+            "hook-b", load_ledger_state(self.ledgers, "hook-b")["ledger_id"]
         )
 
-    def test_post_hook_releases_a_clean_no_op_claim(self) -> None:
+    def test_post_hook_discards_a_clean_no_op_span(self) -> None:
         mutation = self.mutation_payload("hook-a", "hook-call-a")
         pre = self.run_hook(mutation)
         post = self.run_hook({**mutation, "hook_event_name": "PostToolUse"})
 
         self.assertEqual("", pre.stdout)
         self.assertEqual("", post.stdout)
-        entered = run_cli(self.ledgers, "hook-b", "enter", self.repo)
-        self.assertEqual("acquired", entered["claim"]["action"])
+        branch = next(
+            iter(load_ledger_state(self.ledgers, "hook-a")["repos"].values())
+        )["branches"]["main"]
+        self.assertEqual([], branch["contributions"])
 
-    def test_post_hook_retains_a_dirty_claim(self) -> None:
+    def test_post_hook_attributes_a_dirty_change_without_blocking_another_thread(
+        self,
+    ) -> None:
         mutation = self.mutation_payload("hook-a", "hook-call-a")
         self.run_hook(mutation)
         (self.repo / "app.txt").write_text("dirty\n", encoding="utf-8")
 
         post = self.run_hook({**mutation, "hook_event_name": "PostToolUse"})
-        blocked = run_cli(
-            self.ledgers,
-            "hook-b",
-            "enter",
-            self.repo,
-            expected_code=2,
-        )
+        entered = run_cli(self.ledgers, "hook-b", "enter", self.repo)
 
         self.assertEqual("", post.stdout)
-        self.assertEqual("branch_claimed", blocked["error"])
+        branch = next(
+            iter(load_ledger_state(self.ledgers, "hook-a")["repos"].values())
+        )["branches"]["main"]
+        self.assertEqual(["app.txt"], branch["contributions"][0]["paths"])
+        self.assertEqual("goal-0001", branch["contributions"][0]["goal_id"])
+        self.assertEqual("entered", entered["action"])
+
+    def test_shared_path_is_recorded_as_an_overlap_not_an_ownership_conflict(
+        self,
+    ) -> None:
+        first = self.mutation_payload("thread-a", "call-a")
+        self.run_hook(first)
+        (self.repo / "app.txt").write_text("thread a\n", encoding="utf-8")
+        self.run_hook({**first, "hook_event_name": "PostToolUse"})
+
+        second = self.mutation_payload("thread-b", "call-b")
+        self.run_hook(second)
+        (self.repo / "app.txt").write_text("thread b\n", encoding="utf-8")
+        self.run_hook({**second, "hook_event_name": "PostToolUse"})
+
+        branch = next(
+            iter(load_ledger_state(self.ledgers, "thread-b")["repos"].values())
+        )["branches"]["main"]
+        contribution = branch["contributions"][0]
+        self.assertEqual(["app.txt"], contribution["paths"])
+        self.assertEqual("thread-a", contribution["overlaps"][0]["ledger_id"])
+        self.assertEqual(["app.txt"], contribution["overlaps"][0]["paths"])
+
+    def test_hook_persists_only_enter_and_real_contribution_events(self) -> None:
+        mutation = self.mutation_payload("hook-a", "hook-call-a")
+        self.run_hook(mutation)
+        self.run_hook({**mutation, "hook_event_name": "PostToolUse"})
+
+        second = self.mutation_payload("hook-a", "hook-call-b")
+        self.run_hook(second)
+        (self.repo / "app.txt").write_text("business change\n", encoding="utf-8")
+        self.run_hook({**second, "hook_event_name": "PostToolUse"})
+
+        database = self.ledgers / "checkpoint-thread.sqlite3"
+        with sqlite3.connect(database) as connection:
+            operations = connection.execute(
+                "SELECT operation, COUNT(*) FROM events "
+                "WHERE ledger_id = 'hook-a' GROUP BY operation ORDER BY operation"
+            ).fetchall()
+            operation_rows = connection.execute(
+                "SELECT COUNT(*) FROM operations WHERE ledger_id = 'hook-a'"
+            ).fetchone()[0]
+            open_spans = connection.execute(
+                "SELECT COUNT(*) FROM hook_spans WHERE ledger_id = 'hook-a'"
+            ).fetchone()[0]
+
+        self.assertEqual([("contribution", 1), ("enter", 1)], operations)
+        self.assertEqual(0, operation_rows)
+        self.assertEqual(0, open_spans)
 
     def test_hook_blocks_direct_git_delivery_commands(self) -> None:
         result = self.run_hook(
@@ -490,7 +533,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.assertIn("direct git push", reason)
         self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
 
-    def test_successful_ship_releases_the_branch_claim(self) -> None:
+    def test_successful_ship_prunes_private_recovery_refs(self) -> None:
         remote = self.root / "remote.git"
         run(["git", "init", "-q", "--bare", str(remote)])
         git(self.repo, "remote", "add", "origin", str(remote))
@@ -521,30 +564,17 @@ class V2ControlPlaneTests(unittest.TestCase):
             "--acceptance-source",
             "objective",
         )
-        closed = run_cli(
-            self.ledgers,
-            "shipper",
-            "close",
-            self.repo,
-            "--reason",
-            "local task complete",
-        )
-        bridge = run_cli(self.ledgers, "bridge-thread", "enter", self.repo)
-        run_cli(
-            self.ledgers,
-            "bridge-thread",
-            "close",
-            self.repo,
-            "--reason",
-            "claim handoff test",
-        )
-        run_cli(self.ledgers, "shipper", "ship", None, "--fetch")
+        shipped = run_cli(self.ledgers, "shipper", "ship", None, "--fetch")
 
-        entered = run_cli(self.ledgers, "next-thread", "enter", self.repo)
-
-        self.assertTrue(closed["claim_released"])
-        self.assertEqual("acquired", bridge["claim"]["action"])
-        self.assertEqual("acquired", entered["claim"]["action"])
+        self.assertEqual("pushed", shipped["branches"][0]["push_status"])
+        self.assertTrue(shipped["branches"][0]["pruned_recovery_refs"])
+        refs = git(
+            self.repo,
+            "for-each-ref",
+            "--format=%(refname)",
+            "refs/codex/checkpoint-thread/shipper/",
+        ).stdout.splitlines()
+        self.assertEqual([], refs)
 
     def test_plugin_and_hook_manifests_are_installable_contracts(self) -> None:
         plugin = json.loads(
@@ -560,7 +590,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         )
 
         self.assertEqual("checkpoint-thread", plugin["name"])
-        self.assertEqual("2.0.1", plugin["version"])
+        self.assertEqual("2.1.0", plugin["version"])
         self.assertEqual("./skill/", plugin["skills"])
         self.assertEqual("checkpoint-thread", marketplace["name"])
         self.assertEqual(".", marketplace["plugins"][0]["source"]["path"])
@@ -584,7 +614,8 @@ class V2ControlPlaneTests(unittest.TestCase):
             }
 
         self.assertEqual(2, version)
-        self.assertTrue({"ledgers", "events", "branch_claims", "operations"} <= tables)
+        self.assertTrue({"ledgers", "events", "hook_spans", "operations"} <= tables)
+        self.assertNotIn("branch_claims", tables)
         with sqlite3.connect(database) as connection:
             connection.execute(
                 "UPDATE ledgers SET state_json = ? WHERE ledger_id = ?",

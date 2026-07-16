@@ -4,9 +4,9 @@ Read this reference only after the user explicitly requests ship or push.
 
 ## Prepare
 
-Run `ship-plan --fetch` and define the ship set as branches that both belong to
-this ledger and contain unpublished thread-owned commits. Do not include branches
-that were merely visited, unrelated local commits, tags, or other remotes.
+Run `ship-plan --fetch` and define the ship set as branches registered by this
+ledger with unpublished attributed commits. Do not include branches that were
+merely visited, unrelated local commits, tags, or other remotes.
 
 Reconcile every provisional, safety, or failed confirmed checkpoint before
 shipping. Promote accepted work with `promote --checkpoint-ref "$REF"`; mark an
@@ -18,9 +18,9 @@ unambiguous remote, merge target, current verification evidence, and no unmerged
 index or unfinished Git operation.
 
 When upstream advanced, automatically rebase only when the worktree is clean,
-every local-only commit is thread-owned, and a pre-rebase safety ref exists. Abort
-and block on conflict. Report the conflict paths and the rebase-based resolution
-sequence; do not weaken verification or force-push.
+every local-only commit is attributed in this ledger, and a pre-rebase safety ref
+exists. Abort and block on conflict. Report the conflict paths and the
+rebase-based resolution sequence; do not weaken verification or force-push.
 
 ## Push
 

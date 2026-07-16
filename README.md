@@ -10,8 +10,8 @@
 验收目录和真实远端协作证据。
 
 它解决的核心问题是：Codex task 没有内建回退点，但又不应该每个 turn 都
-提交一次。这个 skill 以 task 为所有权范围、以目标边界为 checkpoint、以
-branch 为交付通道，只推送当前 task 真正拥有的提交。
+提交一次。这个 skill 允许多个 task 在看似混杂的 dirty branch 上工作，同时
+把实际修改关联到 task 和业务目标，最后再整理成原子 commit。
 
 ## 推荐启用方式
 
@@ -70,7 +70,7 @@ Hook 不是后台进程或文件监听器，只在 Codex tool 调用前后执行
 触发它；此时可手动运行 `enter` 或在下一次 Codex 修改前由 guard 接管。
 
 刚执行 `git init`、尚无初始 commit 的仓库也受支持：checkpoint 可以正常
-park/restore，第一次验收后的 `promote` 会创建只包含 task-owned 路径的 root
+park/restore，第一次验收后的 `promote` 会创建只包含已选择路径的 root
 commit。
 
 也可以在首次请求中显式触发：
@@ -90,9 +90,10 @@ $checkpoint-thread 修复订单详情页操作栏高度问题。
 | 继续微调同一个目标 | 不创建新 checkpoint |
 | 直接开始一个不同的低风险目标 | 为前一个目标创建 provisional 私有 ref |
 | 明确认可结果，或客观验收通过 | 将精确相关路径提交为本地原子 commit |
-| 只保留本地 commit 并结束 task | `close` 后释放 branch 占用 |
+| 只保留本地 commit 并结束 task | `close` 记录本地完成状态 |
 | 切换到其他 branch/worktree | 先提交或 park 当前状态，再登记目标 branch |
 | task 涉及另一个 repo | 在同一 ledger 中独立登记该 repo |
+| 另一个 task 同时修改同一 branch | 允许继续；记录各自 contribution，重叠路径在提交时处理 |
 | 明确要求“提交并推送” | 执行 ship，并返回推送报告和合并方案 |
 
 例如，一个自然的使用过程可以是：
@@ -108,23 +109,23 @@ $checkpoint-thread 修复订单详情页操作栏高度问题。
 转折词，也会根据对象和意图变化被识别为新目标。最后一句才授权 fetch、rebase
 和 push。
 
-## 控制面
+## 归属账本
 
-V2 只使用用户所选 ledger root 下的 `checkpoint-thread.sqlite3` 保存 ledger 状态和
-审计事件，不创建 per-task JSON 投影，也不迁移旧格式。恢复内容仍存放在仓库的私有
-Git refs。每个回执都包含实际 `ledger_root`、数据库路径和事件/操作标识；
-`inspect --check` 可诊断数据库完整性、孤立 ref、分支占用和未完成操作。
+V2.1 只使用用户所选 ledger root 下的 `checkpoint-thread.sqlite3` 保存 provenance
+ledger，不创建 per-task JSON 投影。恢复内容仍存放在仓库的私有 Git refs。
+PreToolUse 暂存 before-state，PostToolUse 只在内容真实变化时写入一条 contribution；
+没有变化的 Hook 调用不产生持久事件。
 
-同一 repo branch 同时只允许一个 task 占用。干净的本地任务可用 `close` 保留未发布
-commit 并释放占用；`park`、成功 ship，以及没有留下脏状态的 no-op tool 也会释放。
-旧 task 之后仍可尝试 ship，但如果新 task 已在同一 branch 添加 commit，所有权检查
-会保守阻断并要求先拆分历史。
+同一 repo branch 允许多个 task 同时登记和编辑。Contribution 保存 task、goal、
+before/after `state_oid` 和 changed paths；同一路径被多个 task 修改时记录 overlap，
+但不会阻止编辑。人工或外部修改保持 unattributed，直到提交阶段明确分配。SQLite
+只是业务归属账本，不拥有 branch，也不复制 Git 的 commit DAG。
 
 ## 推送时会检查什么
 
 在推送前，skill 会确认：
 
-- ship set 只包含当前 task 拥有且尚未发布的提交；
+- ship set 只包含已归属且尚未发布的提交；
 - provisional checkpoint 已被提交或明确排除；
 - 验证已经通过，或者明确记录为 `not_applicable`；
 - worktree 干净，没有未完成的 merge/rebase；
@@ -138,13 +139,14 @@ commit 并释放占用；`park`、成功 ship，以及没有留下脏状态的 n
 
 完成 ship 后，报告包含：
 
-- repo、branch、最终 commit SHA 和 upstream；
+- repo、branch、goal/contribution、最终 commit SHA 和 upstream；
 - verification、排除文件和恢复 ref；
 - rebase/冲突处理结果与最终 push 状态；
 - 每个 branch 的 source、target、依赖顺序、合并策略和合并后验证方案。
 
 失败的 snapshot、hook、fetch、rebase 或 push 不会被报告为成功，也不会 force
-push。私有 `refs/codex/checkpoint-thread/...` 永远不会推送到 remote。
+push。私有 `refs/codex/checkpoint-thread/...` 永远不会推送到 remote；成功 ship
+后，已经由 pushed commit 表达的 recovery refs 会被清理，只在 ledger 保留回执。
 
 ## 手动 CLI
 

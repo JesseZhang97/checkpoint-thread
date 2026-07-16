@@ -4,10 +4,10 @@ The lab uses disposable Git repositories and local bare remotes. It never touche
 real project repositories. The opt-in GitHub driver uses only uniquely named
 `collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
-The quantified catalog contains the original 80 workflow scenarios plus 22 V2
-scenarios. The executable suite contains 53 original tests and 22 V2 tests.
+The quantified catalog contains the original 80 workflow scenarios plus 24 V2.1
+scenarios. The executable suite contains 53 original tests and 24 V2.1 tests.
 
-## V2 control and enforcement
+## V2 attribution and enforcement
 
 | Scenario | Expected behavior |
 |---|---|
@@ -19,10 +19,12 @@ scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 | Database integrity | `inspect --check` and `doctor` report SQLite integrity directly |
 | Verification identity | Exact complete `state_oid` may transfer to a promoted commit |
 | Partial promotion | Verification for unrelated dirty state is not transferred |
-| Concurrent entry | Exactly one task acquires a repo/branch claim |
-| Claim release | Close, park, ship, and clean no-op settle release; dirty settle retains |
+| Concurrent entry | Multiple tasks may enter the same repo/branch concurrently |
+| No-op Hook | Remove the transient span without an event or operation row |
+| Contribution Hook | Persist one thread/goal contribution for one real edit |
+| Shared path | Record conservative cross-thread overlap without blocking mutation |
 | Read-only Hook | Return silently without a ledger, database, or ref |
-| Mutation Hook | Enter before the write and deny missing configuration or competing owner |
+| Mutation Hook | Enter before the write and deny missing configuration, not another thread |
 | Stable task identity | Prefer payload `thread_id`, then `CODEX_THREAD_ID`, across session changes |
 | Direct Git bypass | Block raw history/delivery commands and require lifecycle CLI |
 | Package contract | Skill, plugin, marketplace, and Pre/Post Hook manifests resolve |
@@ -35,7 +37,7 @@ scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 | First use without configuration | Block without mutation and suggest a root under `CODEX_HOME` |
 | User-selected ledger root | Persist once, reuse automatically, and require explicit replacement |
 | Unborn branch lifecycle | Park, restore, promote an exact-path root commit, verify, and ship |
-| Unborn pre-existing path | Refuse to claim files already present when the thread enters |
+| Unborn pre-existing path | Refuse to attribute files already present when the thread enters |
 | First mutation | `guard` creates one preflight, baseline ledger entry, and private ref |
 | Repeated enter | Return the original baseline without overwriting it |
 | Detached HEAD | Block before creating a ledger entry |
@@ -66,7 +68,7 @@ scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 | Large tracked file | Preserve it because it already belongs to repo history |
 | Ignored test output | Leave it outside snapshots and commits; report its root |
 | Unignored generated output | Exclude it and report the path |
-| Dirty path before enter | Refuse to claim the whole file as thread-owned |
+| Dirty path before enter | Refuse to attribute the whole file to the entering thread |
 
 ## Collaboration and delivery
 
@@ -74,8 +76,8 @@ scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 |---|---|
 | Remote advances without overlap | Create pre-rebase ref, rebase, then push |
 | Remote advances with overlap | Block and report conflict paths and rebase solution |
-| Unowned local commits | Block ship until commits are separated or confirmed |
-| New remote branch with pre-thread commits | Block before publishing unowned ancestry |
+| Unattributed local commits | Block ship until commits are separated or confirmed |
+| New remote branch with pre-thread commits | Block before publishing unattributed ancestry |
 | Untouched local branch | Exclude it from the ship set |
 | Already-pushed thread branch | Exclude it from later ship sets |
 | Multiple branches, one remote | Push with one atomic group |
@@ -88,6 +90,7 @@ scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 | Multiple blockers | Return all applicable blockers and a stable primary action |
 | Branch in another worktree | Rebase in its clean owning worktree without repurposing it |
 | Private checkpoint refs | Never include them in any remote push |
+| Delivered checkpoint refs | Prune refs represented by successfully pushed commits |
 | Push report | Include final branch status and divergence handling |
 | Merge plan | Include target, strategy, dependencies, verification, and risk |
 | Verification bound to old HEAD | Block ship until the check is rerun |

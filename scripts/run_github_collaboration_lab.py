@@ -394,12 +394,12 @@ def unowned_new_branch(
     )
     assert not remote_lookup.stdout
     assert branch_report["push_status"] == "blocked"
-    assert pre_thread_commit in branch_report["unowned_local_commits"]
+    assert pre_thread_commit in branch_report["unattributed_local_commits"]
     return {
         "branch": branch,
         "push_status": branch_report["push_status"],
-        "ownership_status": branch_report["ownership_status"],
-        "unowned_local_commits": branch_report["unowned_local_commits"],
+        "attribution_status": branch_report["attribution_status"],
+        "unattributed_local_commits": branch_report["unattributed_local_commits"],
         "remote_branch_created": False,
     }
 

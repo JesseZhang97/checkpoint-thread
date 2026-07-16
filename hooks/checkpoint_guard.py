@@ -181,7 +181,7 @@ def main() -> int:
     if hook_event == "PreToolUse" and protected:
         deny(
             f"Checkpoint Thread blocks direct git {protected}; use the checkpoint "
-            "lifecycle CLI so ownership, recovery, verification, and ship authority "
+            "lifecycle CLI so attribution, recovery, verification, and delivery "
             "remain auditable."
         )
         return 0
@@ -192,8 +192,6 @@ def main() -> int:
             json.dumps(tool_input, sort_keys=True).encode("utf-8")
         ).hexdigest()[:20]
         operation_id = f"hook-{ledger_id}-{digest}"
-    operation_id = f"{'pre' if hook_event == 'PreToolUse' else 'post'}-{operation_id}"
-
     plugin_root = Path(
         os.environ.get("PLUGIN_ROOT", Path(__file__).resolve().parents[1])
     )
@@ -206,11 +204,11 @@ def main() -> int:
             str(cli),
             "--ledger-id",
             ledger_id,
-            "--operation-id",
-            operation_id,
             "guard" if hook_event == "PreToolUse" else "settle",
             "--repo",
             str(root),
+            "--span-id",
+            operation_id,
         ],
         capture_output=True,
         text=True,
@@ -224,10 +222,7 @@ def main() -> int:
         failure = json.loads(result.stdout)
         error = failure.get("error", "guard_failed")
         solution = failure.get("solution")
-        owner = failure.get("owner_ledger_id")
         facts = [f"ledger_id={ledger_id}", f"identity_source={identity_source}"]
-        if owner:
-            facts.append(f"owner_ledger_id={owner}")
         if solution:
             facts.append(f"solution={solution}")
         detail = f" ({', '.join(facts)})"

@@ -21,11 +21,12 @@ class SkillContractTests(unittest.TestCase):
             if line.startswith("description: ")
         )
         self.assertLessEqual(len(description.split()), 45)
-        self.assertIn("A thread is the scope", content)
+        self.assertIn("A branch is a shared workspace", content)
+        self.assertIn("Multiple threads may enter and edit the same", content)
         self.assertIn("semantic goal delta", content)
-        self.assertIn("implicit progression", content)
+        self.assertIn("Implicit progression", content)
         self.assertIn("Read-only threads create nothing", content)
-        self.assertIn("same-goal continuation makes no CLI call", content)
+        self.assertIn("Same-goal continuation requires no agent CLI", content)
         self.assertIn("ask the user once", content)
         self.assertIn(
             "${CODEX_HOME:-$HOME/.codex}/ledgers/checkpoint-thread/active", content
@@ -35,7 +36,7 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("not a daemon", content)
         self.assertIn("fallback `enter`", content)
         self.assertIn("state_oid", content)
-        self.assertIn("direct\nGit history/delivery commands", content)
+        self.assertIn("Use lifecycle commands for history and delivery", content)
         for reference in [
             "ship.md",
             "safety-snapshot.md",

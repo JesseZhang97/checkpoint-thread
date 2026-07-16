@@ -159,14 +159,14 @@ class ControlPlane:
             CREATE INDEX IF NOT EXISTS events_ledger_sequence
                 ON events(ledger_id, sequence);
 
-            CREATE TABLE IF NOT EXISTS branch_claims (
+            CREATE TABLE IF NOT EXISTS hook_spans (
+                ledger_id TEXT NOT NULL,
+                span_id TEXT NOT NULL,
                 repo_id TEXT NOT NULL,
                 branch TEXT NOT NULL,
-                ledger_id TEXT NOT NULL,
-                repo_root TEXT NOT NULL,
-                claimed_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                PRIMARY KEY (repo_id, branch)
+                before_state_oid TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                PRIMARY KEY (ledger_id, span_id)
             );
 
             CREATE TABLE IF NOT EXISTS operations (
@@ -253,79 +253,61 @@ class ControlPlane:
             connection.commit()
         return event_id
 
-    def acquire_claim(
+    def start_span(
         self,
         *,
         ledger_id: str,
+        span_id: str,
         repo_id: str,
         branch: str,
-        repo_root: str,
-    ) -> dict[str, Any]:
+        before_state_oid: str,
+    ) -> None:
         timestamp = now_iso()
         with self.connect(create=True) as connection:
             assert connection is not None
-            connection.execute("BEGIN IMMEDIATE")
-            row = connection.execute(
-                """
-                SELECT ledger_id, repo_root, claimed_at, updated_at
-                FROM branch_claims WHERE repo_id = ? AND branch = ?
-                """,
-                (repo_id, branch),
-            ).fetchone()
-            if row is not None and row["ledger_id"] != ledger_id:
-                connection.rollback()
-                raise ControlPlaneError(
-                    "branch_claimed",
-                    repo_id=repo_id,
-                    branch=branch,
-                    owner_ledger_id=row["ledger_id"],
-                    owner_repo_root=row["repo_root"],
-                    claimed_at=row["claimed_at"],
-                    solution="park_or_ship_owner_then_retry",
-                )
-            action = "retained" if row is not None else "acquired"
             connection.execute(
                 """
-                INSERT INTO branch_claims(
-                    repo_id, branch, ledger_id, repo_root, claimed_at, updated_at
+                INSERT INTO hook_spans(
+                    ledger_id, span_id, repo_id, branch,
+                    before_state_oid, started_at
                 ) VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(repo_id, branch) DO UPDATE SET
-                    repo_root = excluded.repo_root,
-                    updated_at = excluded.updated_at
+                ON CONFLICT(ledger_id, span_id) DO UPDATE SET
+                    repo_id = excluded.repo_id,
+                    branch = excluded.branch,
+                    before_state_oid = excluded.before_state_oid,
+                    started_at = excluded.started_at
                 """,
-                (repo_id, branch, ledger_id, repo_root, timestamp, timestamp),
+                (
+                    ledger_id,
+                    span_id,
+                    repo_id,
+                    branch,
+                    before_state_oid,
+                    timestamp,
+                ),
             )
             connection.commit()
-        return {
-            "action": action,
-            "repo_id": repo_id,
-            "branch": branch,
-            "ledger_id": ledger_id,
-            "claimed_at": row["claimed_at"] if row is not None else timestamp,
-        }
 
-    def release_claim(self, *, ledger_id: str, repo_id: str, branch: str) -> bool:
-        with self.connect(create=False) as connection:
-            if connection is None:
-                return False
-            cursor = connection.execute(
-                """
-                DELETE FROM branch_claims
-                WHERE repo_id = ? AND branch = ? AND ledger_id = ?
-                """,
-                (repo_id, branch, ledger_id),
-            )
-            connection.commit()
-            return cursor.rowcount > 0
-
-    def claim(self, *, repo_id: str, branch: str) -> dict[str, Any] | None:
+    def pop_span(self, *, ledger_id: str, span_id: str) -> dict[str, Any] | None:
         with self.connect(create=False) as connection:
             if connection is None:
                 return None
+            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT * FROM branch_claims WHERE repo_id = ? AND branch = ?",
-                (repo_id, branch),
+                """
+                SELECT ledger_id, span_id, repo_id, branch,
+                       before_state_oid, started_at
+                FROM hook_spans
+                WHERE ledger_id = ? AND span_id = ?
+                """,
+                (ledger_id, span_id),
             ).fetchone()
+            if row is not None:
+                connection.execute(
+                    "DELETE FROM hook_spans WHERE ledger_id = ? AND span_id = ?",
+                    (ledger_id, span_id),
+                )
+            connection.commit()
             return dict(row) if row is not None else None
 
     def event_count(self, ledger_id: str) -> int:
@@ -432,12 +414,16 @@ class ControlPlane:
     def inventory(self) -> dict[str, Any]:
         with self.connect(create=False) as connection:
             if connection is None:
-                return {"ledgers": {}, "claims": [], "incomplete_operations": []}
+                return {
+                    "ledgers": {},
+                    "hook_spans": [],
+                    "incomplete_operations": [],
+                }
             ledger_rows = connection.execute(
                 "SELECT ledger_id, state_json FROM ledgers ORDER BY ledger_id"
             ).fetchall()
-            claims = connection.execute(
-                "SELECT * FROM branch_claims ORDER BY repo_id, branch"
+            spans = connection.execute(
+                "SELECT * FROM hook_spans ORDER BY started_at"
             ).fetchall()
             incomplete = connection.execute(
                 """
@@ -454,6 +440,6 @@ class ControlPlane:
                     )
                     for row in ledger_rows
                 },
-                "claims": [dict(row) for row in claims],
+                "hook_spans": [dict(row) for row in spans],
                 "incomplete_operations": [dict(row) for row in incomplete],
             }

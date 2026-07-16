@@ -1,7 +1,7 @@
 {
   "name": "checkpoint-thread",
-  "version": "2.0.1",
-  "description": "Enforce thread-scoped Git checkpoints before Codex mutations and ship only verified, thread-owned work.",
+  "version": "2.1.0",
+  "description": "Attribute thread-scoped edits in shared Git workspaces, preserve checkpoints, and ship verified business changes.",
   "author": {
     "name": "Jesse Zhang"
   },
@@ -18,8 +18,8 @@
   "skills": "./skill/",
   "interface": {
     "displayName": "Checkpoint Thread",
-    "shortDescription": "Checkpoint and ship thread-owned Git work.",
-    "longDescription": "A lightweight skill plus PreToolUse guard that establishes a recoverable baseline before Codex mutates a repository, binds verification to exact Git state, and ships only thread-owned commits.",
+    "shortDescription": "Attribute and checkpoint shared Git work.",
+    "longDescription": "A lightweight skill plus synchronous Hooks that record which thread and goal changed repository content without locking the branch, preserve recoverable checkpoints, and organize verified changes into commits.",
     "developerName": "Jesse Zhang",
     "category": "Developer Tools",
     "capabilities": [

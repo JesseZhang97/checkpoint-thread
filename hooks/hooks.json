@@ -8,7 +8,7 @@
             "type": "command",
             "command": "/usr/bin/env python3 \"${PLUGIN_ROOT}/hooks/checkpoint_guard.py\"",
             "timeout": 30,
-            "statusMessage": "Checkpoint Thread is verifying repository ownership"
+            "statusMessage": "Checkpoint Thread is recording repository attribution"
           }
         ]
       }

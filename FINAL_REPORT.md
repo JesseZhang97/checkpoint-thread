@@ -2,9 +2,9 @@
 
 ## Outcome
 
-V2 passes the expanded quantified acceptance model. All original 80 scenarios
-remain covered, and all 22 new control-plane, verification, concurrency, and
-Hook scenarios pass.
+V2.1 passes the expanded quantified acceptance model. All original 80 scenarios
+remain covered, with 24 provenance-ledger, verification, shared-branch, and Hook
+scenarios added.
 
 | Gate | Required | Observed | Result |
 |---|---:|---:|---|
@@ -12,16 +12,16 @@ Hook scenarios pass.
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
 | Lowest domain coverage | >= 80% | 100% | Pass |
-| Negative executable cases | >= 35% | 53.12% | Pass |
+| Negative executable cases | >= 35% | 50% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 75/75 | Pass |
-| `SKILL.md` lines | <= 100 | 99 | Pass |
-| `SKILL.md` words | <= 650 | 649 | Pass |
+| Local test suite | All pass | 77/77 | Pass |
+| `SKILL.md` lines | <= 100 | 94 | Pass |
+| `SKILL.md` words | <= 650 | 606 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 191.78 ms | Pass |
-| `enter` p95 | <= 750 ms | 434.17 ms | Pass |
-| `guard` p95 | <= 500 ms | 244.45 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 555.36 ms | Pass |
+| `status` p95 | <= 250 ms | 170.33 ms | Pass |
+| `enter` p95 | <= 750 ms | 384.04 ms | Pass |
+| `guard` p95 | <= 500 ms | 322.27 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 660.42 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -31,11 +31,11 @@ The lean-architecture and progressive-disclosure review is in
 
 ## Operating Model
 
-- One Codex thread is the ownership scope.
+- A branch is a shared Git workspace; a Codex task is an attribution source.
 - Hook identity prefers payload `thread_id`, then the stable
   `CODEX_THREAD_ID`, and uses `session_id` only as a legacy fallback.
 - A goal boundary, not a turn, is the checkpoint cadence.
-- A branch is a delivery lane; one thread may own work on several lanes.
+- A goal is the commit candidate; several tasks may contribute on one branch.
 - The plugin Hook runs `guard`; without it, `enter` is the lazy idempotent entry.
 - The user selects the ledger root once on first mutation; the recommended
   default is under `CODEX_HOME`, and later tasks reuse the saved choice.
@@ -44,32 +44,34 @@ The lean-architecture and progressive-disclosure review is in
 - The model decides `continuation`, `new_goal`, or `ambiguous` semantically. The
   deterministic CLI owns Git mutations and ledger state, not language parsing.
 
-## V2 Control Plane
+## V2.1 Provenance Ledger
 
-- SQLite schema V2 under the configured ledger root is the only ledger state and
-  audit store.
+- SQLite schema V2 under the configured ledger root stores attribution and
+  milestone audit state. Git remains authoritative for files, branches, commits,
+  refs, and remotes.
 - No per-task JSON projection or legacy migration path exists.
 - Pre-release aliases are intentionally absent: lifecycle entry is `enter`, and
   diagnostics use `inspect` or `doctor`.
 - Every receipt self-locates the configuration, database, event, and operation.
-- Operation ids make completed calls replayable and expose interrupted calls to
-  `inspect --check`.
-- A repo/branch has at most one active task claim. Explicit clean-local close,
-  park, successful ship, and a clean no-op PostToolUse release it; dirty work
-  retains it.
+- Operation ids remain available for explicit lifecycle retries. Hook guard and
+  settle use transient spans instead of durable operation rows.
+- Multiple task ledgers may register the same repo/branch. Real Codex edits add
+  one contribution event; no-op Hook pairs leave no durable row.
+- Same-path contributions record overlap evidence rather than denying mutation.
+- Successful ship prunes recovery refs already represented by pushed commits.
 - The Hook is synchronous and silent on allow. It is not a daemon or human file
   watcher.
 
 ## Supported Workflow
 
-### Enrollment and ownership
+### Enrollment and attribution
 
 - Enroll an initialized non-bare Git repository before its first mutation.
 - Keep a thread ledger outside business repositories, keyed by Git common dir.
 - Record branch baselines once across repeated `enter` calls.
 - Reject detached HEAD, non-repository paths, and corrupt ledger state.
-- Do not silently claim dirty pre-thread paths, pre-thread commits, merely visited
-  branches, or commits from another thread.
+- Do not silently attribute dirty pre-entry paths, pre-entry commits, merely
+  visited branches, or external edits to the current task.
 - Support repositories without an initial commit through park, restore,
   exact-path root promotion, verification, and first push.
 
@@ -117,25 +119,25 @@ The lean-architecture and progressive-disclosure review is in
 ### Branches, worktrees, and repositories
 
 - Track multiple branches and worktrees through the common Git directory.
-- Rebase a clean owned branch in its existing worktree, or create a temporary
+- Rebase a clean attributed branch in its existing worktree, or create a temporary
   worktree when that branch is not checked out elsewhere.
 - Leave user-created worktrees intact.
 - Track multiple repositories in one ledger with independent baselines, remotes,
   verification, checkpoints, and merge plans.
 - Treat nested repositories and submodules as separate enrollments.
-- Infer dependency order between thread-owned branches when their ancestry makes
+- Infer dependency order between attributed branches when their ancestry makes
   it observable.
 
 ### Delivery
 
 - Require an explicit ship/push request before fetch, rebase, rewrite, or push.
-- Build the ship set only from unpublished thread-owned commits.
+- Build the ship set only from unpublished commits attributed in the ledger.
 - Exclude untouched and already-published branches.
 - Require a named local branch and a configured or unambiguous remote.
-- Auto-rebase clean, non-conflicting, thread-owned divergence only after creating
+- Auto-rebase clean, non-conflicting, attributed divergence only after creating
   a private pre-rebase safety ref.
 - Block conflicts with exact paths and a rebase-resolution action.
-- Block dirty worktrees, unresolved checkpoints, unowned commits, missing/stale/
+- Block dirty worktrees, unresolved checkpoints, unattributed commits, missing/stale/
   failed verification, missing branches, remote ambiguity, and fetch failure.
 - Push multiple branches to one remote using Git atomic push.
 - Reject an entire atomic group when one ref advances after preflight, and mark
@@ -168,7 +170,7 @@ identities and uniquely named collaboration branches. Run
 | Clean remote divergence | Safety ref, automatic rebase, successful push |
 | Conflicting divergence | Exact conflict path, blocked push, high-risk merge plan |
 | Late remote advance | Stale push rejected, final status `failed`, replan action |
-| Unowned new branch | Publication blocked and no remote branch created |
+| Unattributed new branch | Publication blocked and no remote branch created |
 | Two branches, one remote | Both refs published in one atomic push group |
 
 The run also proves that private `refs/codex/checkpoint-thread/...` refs were not
@@ -183,7 +185,7 @@ The checked-in acceptance catalog has no remaining coverage gaps.
 Git LFS object transport, server administration, authentication recovery,
 platform-specific case-collision behavior, and parent-repository mutation of
 submodule contents are excluded product scope. These exclusions do not weaken
-the covered ownership, recovery, and delivery invariants.
+the covered provenance, recovery, and delivery invariants.
 
 ## Reproduction
 
@@ -195,6 +197,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 75-test disposable-repository suite, resolves all 102
+The verifier runs the 77-test disposable-repository suite, resolves all 104
 catalog evidence pointers, measures the four hot paths, validates the lean-skill
 limits, and exits nonzero when any acceptance gate fails.

@@ -2,14 +2,14 @@
 
 ## Meaning of "most scenarios"
 
-Coverage is measured against the checked-in 102-scenario catalog, not raw Python
-line coverage. The original 80 scenarios remain intact. Twenty V2 scenarios add
-the control plane, verification integrity, concurrency, and Hook enforcement
-without weakening the previous gates.
+Coverage is measured against the checked-in 104-scenario catalog, not raw Python
+line coverage. The original 80 scenarios remain intact. Twenty-four V2.1
+scenarios add the provenance ledger, verification integrity, shared-branch
+concurrency, and Hook enforcement without weakening the previous gates.
 
 Scenario weights are:
 
-- P0, weight 5: a failure can lose work, publish unowned history, misreport a
+- P0, weight 5: a failure can lose work, publish unattributed history, misreport a
   delivery, or violate explicit authority.
 - P1, weight 3: a common workflow or report becomes incorrect or unusable.
 - P2, weight 1: a rare edge has a documented conservative fallback.
@@ -45,10 +45,18 @@ On the acceptance machine, the disposable-repo benchmark requires:
 These are regression budgets, not universal hardware guarantees. The observed
 values and machine-independent structural limits are included in the report.
 
+Persistence acceptance additionally requires:
+
+- after initial entry, a no-op Pre/Post Hook pair leaves zero event and operation rows;
+- a real Codex edit creates exactly one contribution event;
+- multiple threads may enter the same branch concurrently;
+- shared paths produce overlap evidence rather than a mutation denial;
+- successful ship leaves no live recovery ref for that ledger branch.
+
 ## Supported scope
 
-The catalog covers SQLite-only audit state, operation replay, database integrity,
-exact verification identity, branch claims and their release,
+The catalog covers SQLite-only attribution state, operation replay, database integrity,
+exact verification identity, contribution spans and shared-branch overlap,
 unborn and ordinary worktrees, root commits, staging, untracked and ignored
 files, multiple branches/worktrees/repos, local and GitHub remotes, Hook allow
 and deny paths, concurrent remote changes, atomic rejection, rebase, conflict,

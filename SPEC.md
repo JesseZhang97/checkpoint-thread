@@ -2,36 +2,40 @@
 
 ## Intent
 
-Give one Codex thread local recovery and delivery structure without requiring a
-manual entry command or treating every turn as a commit. The skill tracks the
-thread's work across files, branches, worktrees, and occasional multiple repos,
-then ships only the history owned by that thread.
+Let several Codex threads work in a shared dirty Git workspace while preserving
+recovery points and recording which thread and business goal produced each
+change. The ledger helps organize those contributions into verified commits; it
+does not own or lock branches.
 
 ## Operating model
 
-- Thread is the ownership scope.
+- Thread is an attribution source.
 - Goal or accepted milestone is the checkpoint cadence.
-- Branch is the delivery lane.
+- Branch is a shared workspace and eventual delivery lane.
+- Contribution is an observed before/after state transition during one Codex
+  tool call under a thread and goal. Concurrent edits make it evidence rather
+  than exclusive authorship.
 - Turn is only conversation context, never a checkpoint unit.
 - Enter is lazy and idempotent before the first persistent repo mutation.
 - Goal transitions are semantic judgments by the model, not keyword parsing.
-- The synchronous Hook enforces repository entry; it is not a daemon or a human
-  file watcher.
+- The synchronous Hook records Codex contributions; it is not a daemon or a
+  human file watcher.
 
 An accepted goal becomes a local branch commit. Implicit progression into a
 distinct low-risk goal creates a provisional private ref. Ambiguous progression
 stays within one concern until evidence supports a boundary.
 
-## Control-plane invariants
+## Ledger invariants
 
-- The selected ledger root contains one SQLite V2 control plane. It is the only
-  ledger state and audit store; no projection or legacy migration path exists.
-- Every mutation receipt identifies the effective configuration, ledger root,
-  control-plane path, and event or operation id.
-- Operation ids make completed calls replayable and incomplete calls diagnosable.
-- A `(repo common dir, branch)` claim has at most one task owner. Explicit
-  clean-local `close`, `park`, and successful ship release it; PostToolUse
-  releases only clean no-op ownership.
+- The selected ledger root contains one SQLite V2 provenance ledger. It stores
+  attribution and milestone audit state, never file content or an alternate Git
+  branch graph.
+- Successful `guard` and no-op `settle` calls create no durable audit event or
+  operation row. A real edit creates one contribution event.
+- Hook spans are transient before-state records and are deleted by PostToolUse.
+- Multiple ledgers may register the same repo and branch concurrently.
+- Contributions record goal id, before and after `state_oid`, changed paths, and
+  conservative cross-thread path overlaps.
 - Non-config commands cannot override the configured ledger root.
 
 ## Git and recovery invariants
@@ -46,21 +50,24 @@ stays within one concern until evidence supports a boundary.
 - Secrets, ignored files, local test output, generated output, and oversized
   untracked files are excluded and reported; large tracked files are preserved.
 - Existing dirty paths, unrelated staged changes, local commits, and branches are
-  not silently claimed as thread-owned.
+  not silently attributed to the entering thread.
 - An unborn branch can park and restore dirty state; its first accepted promotion
-  creates an exact-path root commit without claiming pre-existing files.
+  creates an exact-path root commit without attributing pre-existing files.
 - Remote-reachable history is never rewritten and pushes are never forced.
+- Successful ship prunes recovery refs whose state is represented by pushed
+  commits; receipts retain their historical ids.
 
 ## Enforcement invariants
 
-- `PreToolUse` is silent for read-only tools and records `guard -> enter` before
-  recognized Codex file or Git mutations.
-- Missing configuration, another task's active branch claim, Git operations in
-  progress, and direct Git history/delivery commands fail closed.
-- `PostToolUse` never releases a claim while the branch is dirty, has unresolved
-  checkpoints, or contains unpublished task-owned commits.
+- `PreToolUse` is silent for read-only tools, lazily enters the thread, and stores
+  a transient before-state before recognized Codex mutations.
+- Missing configuration, Git operations in progress, and direct Git
+  history/delivery commands fail closed.
+- `PostToolUse` records a contribution only when the resulting state differs.
+- Same-branch threads are allowed. Same-path changes are marked as overlaps and
+  reconciled during commit selection rather than blocked during editing.
 - Hook enforcement covers Codex tool calls. Human edits and processes outside
-  Codex remain an explicit boundary.
+  Codex remain unattributed until explicitly assigned.
 
 ## Verification invariants
 
@@ -76,9 +83,9 @@ stays within one concern until evidence supports a boundary.
 ## Delivery invariants
 
 - Fetch, rebase, history rewrite, and push require an explicit ship request.
-- Ship set contains only ledger branches with unpublished thread-owned commits.
+- Ship set contains only ledger branches with unpublished attributed commits.
 - Clean non-conflicting divergence may auto-rebase only after a safety ref and an
-  ownership check; conflicts block with a resolution sequence.
+  attribution check; conflicts block with a resolution sequence.
 - Branches for one remote push atomically. Cross-repo or cross-remote delivery is
   preflighted but reported as non-atomic.
 - If one ref advances after preflight, an atomic group rejects every ref and
@@ -86,13 +93,13 @@ stays within one concern until evidence supports a boundary.
 - Every branch receipt includes push status and a merge plan with target,
   strategy, dependency order, verification evidence, and conflict risk.
 - Unresolved checkpoints, failed checks, stale recorded verification, dirty
-  worktrees, or unowned local commits block shipping.
+  worktrees, or unattributed local commits block shipping.
 
 ## Stable test seam
 
 The bundled CLI exposes JSON for `enter`, `guard`, `settle`, `inspect`,
 `snapshot`, `promote`, `ship-plan`, and related lifecycle commands. Disposable
-repo tests assert SQLite state, events, operation replay, claims, Hook decisions,
-Git refs, exact state ids, branch tips, index/worktree state, remote state, and
-ledger decisions. The model retains responsibility for semantic goal
-classification.
+repo tests assert SQLite state, events, operation replay, Hook decisions,
+Git refs, contributions, shared-branch overlap reporting, exact state ids,
+branch tips, index/worktree state, remote state, and ledger decisions. The model
+retains responsibility for semantic goal classification and final attribution.
