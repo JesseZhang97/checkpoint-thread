@@ -3,7 +3,7 @@
 ## Outcome
 
 V2 passes the expanded quantified acceptance model. All original 80 scenarios
-remain covered, and all 20 new control-plane, verification, concurrency, and
+remain covered, and all 22 new control-plane, verification, concurrency, and
 Hook scenarios pass.
 
 | Gate | Required | Observed | Result |
@@ -12,16 +12,16 @@ Hook scenarios pass.
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
 | Lowest domain coverage | >= 80% | 100% | Pass |
-| Negative executable cases | >= 35% | 54.26% | Pass |
+| Negative executable cases | >= 35% | 53.12% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 73/73 | Pass |
+| Local test suite | All pass | 75/75 | Pass |
 | `SKILL.md` lines | <= 100 | 99 | Pass |
 | `SKILL.md` words | <= 650 | 649 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 170.61 ms | Pass |
-| `enter` p95 | <= 750 ms | 412.10 ms | Pass |
-| `guard` p95 | <= 500 ms | 232.28 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 577.77 ms | Pass |
+| `status` p95 | <= 250 ms | 191.78 ms | Pass |
+| `enter` p95 | <= 750 ms | 434.17 ms | Pass |
+| `guard` p95 | <= 500 ms | 244.45 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 555.36 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -32,6 +32,8 @@ The lean-architecture and progressive-disclosure review is in
 ## Operating Model
 
 - One Codex thread is the ownership scope.
+- Hook identity prefers payload `thread_id`, then the stable
+  `CODEX_THREAD_ID`, and uses `session_id` only as a legacy fallback.
 - A goal boundary, not a turn, is the checkpoint cadence.
 - A branch is a delivery lane; one thread may own work on several lanes.
 - The plugin Hook runs `guard`; without it, `enter` is the lazy idempotent entry.
@@ -193,6 +195,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 73-test disposable-repository suite, resolves all 100
+The verifier runs the 75-test disposable-repository suite, resolves all 102
 catalog evidence pointers, measures the four hot paths, validates the lean-skill
 limits, and exits nonzero when any acceptance gate fails.

@@ -1,6 +1,6 @@
 {
   "name": "checkpoint-thread",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Enforce thread-scoped Git checkpoints before Codex mutations and ship only verified, thread-owned work.",
   "author": {
     "name": "Jesse Zhang"

@@ -38,25 +38,35 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def run_hook(
-        self, payload: dict, *, configured: bool = True
+        self,
+        payload: dict,
+        *,
+        configured: bool = True,
+        codex_thread_id: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if configured:
             run_cli(self.ledgers, "configure-only", "status", self.repo)
+        environment = {
+            **os.environ,
+            **self.environment,
+            "PLUGIN_ROOT": str(PROJECT_ROOT),
+        }
+        environment.pop("CODEX_THREAD_ID", None)
+        if codex_thread_id is not None:
+            environment["CODEX_THREAD_ID"] = codex_thread_id
         return subprocess.run(
             [sys.executable, str(HOOK)],
             input=json.dumps(payload),
             capture_output=True,
             text=True,
             check=False,
-            env={
-                **os.environ,
-                **self.environment,
-                "PLUGIN_ROOT": str(PROJECT_ROOT),
-            },
+            env=environment,
         )
 
-    def mutation_payload(self, session_id: str, call_id: str) -> dict:
-        return {
+    def mutation_payload(
+        self, session_id: str, call_id: str, *, thread_id: str | None = None
+    ) -> dict:
+        payload = {
             "hook_event_name": "PreToolUse",
             "tool_name": "apply_patch",
             "tool_input": {"command": "*** Begin Patch\n*** End Patch"},
@@ -64,6 +74,9 @@ class V2ControlPlaneTests(unittest.TestCase):
             "tool_use_id": call_id,
             "cwd": str(self.repo),
         }
+        if thread_id is not None:
+            payload["thread_id"] = thread_id
+        return payload
 
     def test_enter_receipt_is_self_locating_and_records_preflight(self) -> None:
         result = run_cli(self.ledgers, self.ledger_id, "enter", self.repo)
@@ -370,6 +383,34 @@ class V2ControlPlaneTests(unittest.TestCase):
         branch = next(iter(ledger["repos"].values()))["branches"]["main"]
         self.assertTrue(ref_exists(self.repo, branch["baseline_ref"]))
 
+    def test_hook_prefers_stable_thread_id_across_session_changes(self) -> None:
+        first = self.run_hook(
+            self.mutation_payload("session-a", "hook-call-a", thread_id="stable-thread")
+        )
+        second = self.run_hook(
+            self.mutation_payload("session-b", "hook-call-b", thread_id="stable-thread")
+        )
+
+        self.assertEqual("", first.stdout)
+        self.assertEqual("", second.stdout)
+        ledger = load_ledger_state(self.ledgers, "stable-thread")
+        self.assertEqual("stable-thread", ledger["ledger_id"])
+
+    def test_hook_uses_codex_thread_id_across_session_changes(self) -> None:
+        first = self.run_hook(
+            self.mutation_payload("session-a", "hook-call-a"),
+            codex_thread_id="stable-thread",
+        )
+        second = self.run_hook(
+            self.mutation_payload("session-b", "hook-call-b"),
+            codex_thread_id="stable-thread",
+        )
+
+        self.assertEqual("", first.stdout)
+        self.assertEqual("", second.stdout)
+        ledger = load_ledger_state(self.ledgers, "stable-thread")
+        self.assertEqual("stable-thread", ledger["ledger_id"])
+
     def test_hook_denies_a_mutation_when_configuration_is_missing(self) -> None:
         result = self.run_hook(
             self.mutation_payload("unconfigured-thread", "unconfigured-call"),
@@ -390,6 +431,14 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
         self.assertIn(
             "branch_claimed",
+            payload["hookSpecificOutput"]["permissionDecisionReason"],
+        )
+        self.assertIn(
+            "ledger_id=hook-b",
+            payload["hookSpecificOutput"]["permissionDecisionReason"],
+        )
+        self.assertIn(
+            "owner_ledger_id=hook-a",
             payload["hookSpecificOutput"]["permissionDecisionReason"],
         )
 
@@ -511,7 +560,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         )
 
         self.assertEqual("checkpoint-thread", plugin["name"])
-        self.assertEqual("2.0.0", plugin["version"])
+        self.assertEqual("2.0.1", plugin["version"])
         self.assertEqual("./skill/", plugin["skills"])
         self.assertEqual("checkpoint-thread", marketplace["name"])
         self.assertEqual(".", marketplace["plugins"][0]["source"]["path"])

@@ -140,6 +140,18 @@ def git_root(path: Path) -> Path | None:
     return Path(result.stdout.strip()).resolve()
 
 
+def resolve_ledger_identity(payload: dict[str, Any]) -> tuple[str | None, str | None]:
+    candidates = (
+        ("thread_id", payload.get("thread_id")),
+        ("CODEX_THREAD_ID", os.environ.get("CODEX_THREAD_ID")),
+        ("session_id", payload.get("session_id")),
+    )
+    for source, value in candidates:
+        if isinstance(value, str) and value.strip():
+            return value.strip(), source
+    return None, None
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -155,8 +167,8 @@ def main() -> int:
     if hook_event not in {"PreToolUse", "PostToolUse"}:
         return 0
 
-    thread_id = payload.get("session_id") or payload.get("thread_id")
-    if not isinstance(thread_id, str) or not thread_id:
+    ledger_id, identity_source = resolve_ledger_identity(payload)
+    if ledger_id is None:
         if hook_event == "PostToolUse":
             return 0
         deny("Checkpoint Thread cannot identify this Codex thread; mutation blocked.")
@@ -179,7 +191,7 @@ def main() -> int:
         digest = hashlib.sha256(
             json.dumps(tool_input, sort_keys=True).encode("utf-8")
         ).hexdigest()[:20]
-        operation_id = f"hook-{thread_id}-{digest}"
+        operation_id = f"hook-{ledger_id}-{digest}"
     operation_id = f"{'pre' if hook_event == 'PreToolUse' else 'post'}-{operation_id}"
 
     plugin_root = Path(
@@ -193,7 +205,7 @@ def main() -> int:
             sys.executable,
             str(cli),
             "--ledger-id",
-            thread_id,
+            ledger_id,
             "--operation-id",
             operation_id,
             "guard" if hook_event == "PreToolUse" else "settle",
@@ -212,7 +224,13 @@ def main() -> int:
         failure = json.loads(result.stdout)
         error = failure.get("error", "guard_failed")
         solution = failure.get("solution")
-        detail = f" ({solution})" if solution else ""
+        owner = failure.get("owner_ledger_id")
+        facts = [f"ledger_id={ledger_id}", f"identity_source={identity_source}"]
+        if owner:
+            facts.append(f"owner_ledger_id={owner}")
+        if solution:
+            facts.append(f"solution={solution}")
+        detail = f" ({', '.join(facts)})"
     except json.JSONDecodeError:
         error = result.stderr.strip() or "guard_failed"
         detail = ""

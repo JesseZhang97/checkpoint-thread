@@ -154,6 +154,7 @@ def benchmark_hot_path() -> dict[str, Any]:
             **os.environ,
             **environment,
             "PLUGIN_ROOT": str(PROJECT_ROOT),
+            "CODEX_THREAD_ID": "hot-path-thread",
         }
         for index in range(10):
             payload = {

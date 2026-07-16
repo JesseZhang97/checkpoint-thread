@@ -2,7 +2,7 @@
 
 ## Meaning of "most scenarios"
 
-Coverage is measured against the checked-in 100-scenario catalog, not raw Python
+Coverage is measured against the checked-in 102-scenario catalog, not raw Python
 line coverage. The original 80 scenarios remain intact. Twenty V2 scenarios add
 the control plane, verification integrity, concurrency, and Hook enforcement
 without weakening the previous gates.

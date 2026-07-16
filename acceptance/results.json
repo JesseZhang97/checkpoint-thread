@@ -1,17 +1,17 @@
 {
   "accepted": true,
   "benchmark": {
-    "enter_p50_ms": 223.28,
-    "enter_p95_ms": 412.1,
+    "enter_p50_ms": 233.22,
+    "enter_p95_ms": 434.17,
     "enter_samples": 10,
-    "guard_p50_ms": 222.29,
-    "guard_p95_ms": 232.28,
+    "guard_p50_ms": 234.09,
+    "guard_p95_ms": 244.45,
     "guard_samples": 20,
-    "hook_roundtrip_p50_ms": 505.04,
-    "hook_roundtrip_p95_ms": 577.77,
+    "hook_roundtrip_p50_ms": 541.2,
+    "hook_roundtrip_p95_ms": 555.36,
     "hook_roundtrip_samples": 10,
-    "status_p50_ms": 163.7,
-    "status_p95_ms": 170.61,
+    "status_p50_ms": 174.25,
+    "status_p95_ms": 191.78,
     "status_samples": 20
   },
   "coverage_by_domain": {
@@ -32,7 +32,7 @@
     "P1": 1.0,
     "P2": 1.0
   },
-  "covered_scenario_count": 100,
+  "covered_scenario_count": 102,
   "gaps": [],
   "gates": {
     "conditional_references": true,
@@ -56,15 +56,15 @@
     "lines": 99,
     "words": 649
   },
-  "negative_executable_ratio": 0.5426,
+  "negative_executable_ratio": 0.5312,
   "real_remote_scenario_count": 5,
   "remote_run_id": "20260715130951-87ccf4",
-  "scenario_count": 100,
+  "scenario_count": 102,
   "tests": {
-    "count": 73,
+    "count": 75,
     "passed": true,
-    "seconds": 109.463,
-    "summary": "----------------------------------------------------------------------\nRan 73 tests in 109.401s\n\nOK"
+    "seconds": 122.959,
+    "summary": "----------------------------------------------------------------------\nRan 75 tests in 122.889s\n\nOK"
   },
   "validation_errors": [],
   "weighted_coverage": 1.0

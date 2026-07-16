@@ -4,8 +4,8 @@ The lab uses disposable Git repositories and local bare remotes. It never touche
 real project repositories. The opt-in GitHub driver uses only uniquely named
 `collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
-The quantified catalog contains the original 80 workflow scenarios plus 20 V2
-scenarios. The executable suite contains 53 original tests and 20 V2 tests.
+The quantified catalog contains the original 80 workflow scenarios plus 22 V2
+scenarios. The executable suite contains 53 original tests and 22 V2 tests.
 
 ## V2 control and enforcement
 
@@ -23,6 +23,7 @@ scenarios. The executable suite contains 53 original tests and 20 V2 tests.
 | Claim release | Close, park, ship, and clean no-op settle release; dirty settle retains |
 | Read-only Hook | Return silently without a ledger, database, or ref |
 | Mutation Hook | Enter before the write and deny missing configuration or competing owner |
+| Stable task identity | Prefer payload `thread_id`, then `CODEX_THREAD_ID`, across session changes |
 | Direct Git bypass | Block raw history/delivery commands and require lifecycle CLI |
 | Package contract | Skill, plugin, marketplace, and Pre/Post Hook manifests resolve |
 | Performance | `status`, `enter`, `guard`, and Hook round trip stay within p95 budgets |
