@@ -34,9 +34,10 @@ class SkillContractTests(unittest.TestCase):
         self.assertIn("configure --replace", content)
         self.assertIn("PreToolUse", content)
         self.assertIn("not a daemon", content)
+        self.assertIn("fails open with a warning", content)
         self.assertIn("fallback `enter`", content)
         self.assertIn("state_oid", content)
-        self.assertIn("Use lifecycle commands for history and delivery", content)
+        self.assertIn("Prefer lifecycle commands for auditable history", content)
         for reference in [
             "ship.md",
             "safety-snapshot.md",

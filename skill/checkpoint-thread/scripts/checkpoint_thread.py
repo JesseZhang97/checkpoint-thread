@@ -847,7 +847,8 @@ def command_settle(args: argparse.Namespace) -> dict[str, Any]:
             "repo": str(root),
             "branch": branch,
         }
-    span = ControlPlane(args.ledger_root).pop_span(
+    control_plane = ControlPlane(args.ledger_root)
+    span = control_plane.get_span(
         ledger_id=args.ledger_id,
         span_id=args.span_id,
     )
@@ -872,6 +873,7 @@ def command_settle(args: argparse.Namespace) -> dict[str, Any]:
     state = capture_state(root, args.large_file_limit)
     paths = tree_changed_paths(root, span["before_state_oid"], state["state_oid"])
     if not paths:
+        control_plane.delete_span(ledger_id=args.ledger_id, span_id=args.span_id)
         return {
             "ok": True,
             "action": "no_change",
@@ -920,6 +922,7 @@ def command_settle(args: argparse.Namespace) -> dict[str, Any]:
                 "overlaps": overlaps,
             },
         )
+        control_plane.delete_span(ledger_id=args.ledger_id, span_id=args.span_id)
         return {
             "ok": True,
             "action": "attributed",

@@ -1,4 +1,4 @@
 interface:
   display_name: "Checkpoint Thread"
-  short_description: "Attribute, checkpoint, and ship shared Git work"
-  default_prompt: "Use $checkpoint-thread to attribute this task's repository edits, preserve recovery points, and organize verified business changes into commits."
+  short_description: "Observe, checkpoint, and ship shared Git work"
+  default_prompt: "Use $checkpoint-thread to observe this task's repository edits without blocking normal tools, preserve recovery points, and organize verified business changes into commits."

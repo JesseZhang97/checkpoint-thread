@@ -12,6 +12,7 @@ from typing import Any, Iterator
 
 SCHEMA_VERSION = 2
 DATABASE_NAME = "checkpoint-thread.sqlite3"
+HOOK_SPAN_TTL_HOURS = 24
 
 
 class ControlPlaneError(Exception):
@@ -263,8 +264,12 @@ class ControlPlane:
         before_state_oid: str,
     ) -> None:
         timestamp = now_iso()
+        cutoff = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=HOOK_SPAN_TTL_HOURS)
+        ).isoformat()
         with self.connect(create=True) as connection:
             assert connection is not None
+            connection.execute("DELETE FROM hook_spans WHERE started_at < ?", (cutoff,))
             connection.execute(
                 """
                 INSERT INTO hook_spans(
@@ -288,11 +293,10 @@ class ControlPlane:
             )
             connection.commit()
 
-    def pop_span(self, *, ledger_id: str, span_id: str) -> dict[str, Any] | None:
+    def get_span(self, *, ledger_id: str, span_id: str) -> dict[str, Any] | None:
         with self.connect(create=False) as connection:
             if connection is None:
                 return None
-            connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
                 """
                 SELECT ledger_id, span_id, repo_id, branch,
@@ -302,13 +306,17 @@ class ControlPlane:
                 """,
                 (ledger_id, span_id),
             ).fetchone()
-            if row is not None:
-                connection.execute(
-                    "DELETE FROM hook_spans WHERE ledger_id = ? AND span_id = ?",
-                    (ledger_id, span_id),
-                )
-            connection.commit()
             return dict(row) if row is not None else None
+
+    def delete_span(self, *, ledger_id: str, span_id: str) -> None:
+        with self.connect(create=False) as connection:
+            if connection is None:
+                return
+            connection.execute(
+                "DELETE FROM hook_spans WHERE ledger_id = ? AND span_id = ?",
+                (ledger_id, span_id),
+            )
+            connection.commit()
 
     def event_count(self, ledger_id: str) -> int:
         with self.connect(create=False) as connection:

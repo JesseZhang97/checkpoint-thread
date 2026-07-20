@@ -1,7 +1,7 @@
 {
   "name": "checkpoint-thread",
-  "version": "2.1.0",
-  "description": "Attribute thread-scoped edits in shared Git workspaces, preserve checkpoints, and ship verified business changes.",
+  "version": "2.2.0",
+  "description": "Observe thread-scoped edits in shared Git workspaces, preserve checkpoints, and ship verified business changes without blocking normal tools.",
   "author": {
     "name": "Jesse Zhang"
   },
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Checkpoint Thread",
     "shortDescription": "Attribute and checkpoint shared Git work.",
-    "longDescription": "A lightweight skill plus synchronous Hooks that record which thread and goal changed repository content without locking the branch, preserve recoverable checkpoints, and organize verified changes into commits.",
+    "longDescription": "A lightweight skill plus fail-open synchronous Hooks that observe which thread and goal changed repository content without locking the branch or controlling normal Git use, preserve recoverable checkpoints, and organize verified changes into commits.",
     "developerName": "Jesse Zhang",
     "category": "Developer Tools",
     "capabilities": [

@@ -2,9 +2,9 @@
 
 ## Outcome
 
-V2.1 passes the expanded quantified acceptance model. All original 80 scenarios
-remain covered, with 24 provenance-ledger, verification, shared-branch, and Hook
-scenarios added.
+V2.2 passes the expanded quantified acceptance model. All original 80 scenarios
+remain covered, with 27 provenance-ledger, verification, shared-branch, and
+fail-open Hook scenarios added.
 
 | Gate | Required | Observed | Result |
 |---|---:|---:|---|
@@ -12,16 +12,16 @@ scenarios added.
 | P0 coverage | 100% | 100% | Pass |
 | P1 coverage | 100% | 100% | Pass |
 | Lowest domain coverage | >= 80% | 100% | Pass |
-| Negative executable cases | >= 35% | 50% | Pass |
+| Negative executable cases | >= 35% | 48.51% | Pass |
 | Real GitHub scenarios | >= 5 | 5 | Pass |
-| Local test suite | All pass | 77/77 | Pass |
-| `SKILL.md` lines | <= 100 | 94 | Pass |
-| `SKILL.md` words | <= 650 | 606 | Pass |
+| Local test suite | All pass | 80/80 | Pass |
+| `SKILL.md` lines | <= 100 | 95 | Pass |
+| `SKILL.md` words | <= 650 | 625 | Pass |
 | Conditional references | <= 4 | 4 | Pass |
-| `status` p95 | <= 250 ms | 170.33 ms | Pass |
-| `enter` p95 | <= 750 ms | 384.04 ms | Pass |
-| `guard` p95 | <= 500 ms | 322.27 ms | Pass |
-| Hook round trip p95 | <= 1000 ms | 660.42 ms | Pass |
+| `status` p95 | <= 250 ms | 180.75 ms | Pass |
+| `enter` p95 | <= 750 ms | 418.72 ms | Pass |
+| `guard` p95 | <= 500 ms | 338.34 ms | Pass |
+| Hook round trip p95 | <= 1000 ms | 713.57 ms | Pass |
 
 The machine-readable result is in `acceptance/results.json`. The definition,
 catalog, and evidence are in `ACCEPTANCE_CRITERIA.md`,
@@ -44,7 +44,7 @@ The lean-architecture and progressive-disclosure review is in
 - The model decides `continuation`, `new_goal`, or `ambiguous` semantically. The
   deterministic CLI owns Git mutations and ledger state, not language parsing.
 
-## V2.1 Provenance Ledger
+## V2.2 Provenance Ledger
 
 - SQLite schema V2 under the configured ledger root stores attribution and
   milestone audit state. Git remains authoritative for files, branches, commits,
@@ -59,8 +59,9 @@ The lean-architecture and progressive-disclosure review is in
   one contribution event; no-op Hook pairs leave no durable row.
 - Same-path contributions record overlap evidence rather than denying mutation.
 - Successful ship prunes recovery refs already represented by pushed commits.
-- The Hook is synchronous and silent on allow. It is not a daemon or human file
-  watcher.
+- The Hook is a fail-open synchronous observer, not a daemon, policy gate, or
+  human file watcher. It ignores ordinary builds, tests, and Git delivery.
+- Failed Post spans remain diagnosable and later guards prune them after 24 hours.
 
 ## Supported Workflow
 
@@ -197,6 +198,6 @@ python3 scripts/verify_acceptance.py \
   --output acceptance/results.json
 ```
 
-The verifier runs the 77-test disposable-repository suite, resolves all 104
+The verifier runs the 80-test disposable-repository suite, resolves all 107
 catalog evidence pointers, measures the four hot paths, validates the lean-skill
 limits, and exits nonzero when any acceptance gate fails.

@@ -4,10 +4,10 @@ The lab uses disposable Git repositories and local bare remotes. It never touche
 real project repositories. The opt-in GitHub driver uses only uniquely named
 `collab/<run-id>/...` branches on an explicitly supplied lab remote.
 
-The quantified catalog contains the original 80 workflow scenarios plus 24 V2.1
-scenarios. The executable suite contains 53 original tests and 24 V2.1 tests.
+The quantified catalog contains the original 80 workflow scenarios plus 27 V2.2
+scenarios. The executable suite contains 53 original tests and 27 V2.2 tests.
 
-## V2 attribution and enforcement
+## V2.2 attribution and Hook observation
 
 | Scenario | Expected behavior |
 |---|---|
@@ -24,9 +24,11 @@ scenarios. The executable suite contains 53 original tests and 24 V2.1 tests.
 | Contribution Hook | Persist one thread/goal contribution for one real edit |
 | Shared path | Record conservative cross-thread overlap without blocking mutation |
 | Read-only Hook | Return silently without a ledger, database, or ref |
-| Mutation Hook | Enter before the write and deny missing configuration, not another thread |
+| Mutation Hook | Enter before recognized writes; fail open with a warning when attribution is unavailable |
+| Narrow observation | Ignore ordinary builds, tests, and direct Git delivery commands |
+| Failed Post Hook | Retain its span, report a warning, and let later guards prune it after 24 hours |
 | Stable task identity | Prefer payload `thread_id`, then `CODEX_THREAD_ID`, across session changes |
-| Direct Git bypass | Block raw history/delivery commands and require lifecycle CLI |
+| Git policy | Keep normal Git use outside the attribution Hook; prefer lifecycle CLI through skill instructions |
 | Package contract | Skill, plugin, marketplace, and Pre/Post Hook manifests resolve |
 | Performance | `status`, `enter`, `guard`, and Hook round trip stay within p95 budgets |
 

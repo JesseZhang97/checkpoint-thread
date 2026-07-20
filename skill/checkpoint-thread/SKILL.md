@@ -1,6 +1,6 @@
 ---
 name: checkpoint-thread
-description: Attribute Codex repository edits to their thread and business goal before organizing verified changes into commits and shipping them. Use on every repo-mutating task; the hook records contributions without locking the branch.
+description: Attribute Codex repository edits to their thread and business goal before organizing verified changes into commits and shipping them. Use on every repo-mutating task; the fail-open hook observes recognized writes without locking the branch or blocking normal tools.
 ---
 
 # Checkpoint Thread
@@ -22,7 +22,8 @@ with explicit confirmation via `configure --replace`.
 
 The synchronous `PreToolUse` hook silently captures the before-state and lazily
 enters the repo. `PostToolUse` records one contribution only when content changed.
-It is not a daemon and does not observe human file saves. Without the hook, run:
+It is not a daemon: it fails open with a warning, ignores ordinary build/test and
+delivery commands, and does not observe human file saves. Without the hook, run:
 
 ```bash
 python3 scripts/checkpoint_thread.py --ledger-id "$LEDGER_ID" enter --repo "$ROOT" --merge-target "$TARGET"
@@ -82,7 +83,7 @@ only when those branches occur.
 
 `enter` authorizes private recovery refs; `promote` authorizes selected local
 commits. Fetch, rebase, history rewrite, and push require an explicit ship
-request. Use lifecycle commands for history and delivery. Never force-push or
+request. Prefer lifecycle commands for auditable history and delivery. Never force-push or
 push private refs. Successful ship prunes recovery refs represented by pushed
 commits.
 

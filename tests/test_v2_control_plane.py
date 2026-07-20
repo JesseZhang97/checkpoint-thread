@@ -382,6 +382,25 @@ class V2ControlPlaneTests(unittest.TestCase):
         branch = next(iter(ledger["repos"].values()))["branches"]["main"]
         self.assertTrue(ref_exists(self.repo, branch["baseline_ref"]))
 
+    def test_hook_observes_an_explicit_shell_write(self) -> None:
+        result = self.run_hook(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "exec_command",
+                "tool_input": {
+                    "cmd": "printf 'changed\\n' > app.txt",
+                    "workdir": str(self.repo),
+                },
+                "session_id": "shell-write-thread",
+                "tool_use_id": "shell-write-call",
+                "cwd": str(self.repo),
+            }
+        )
+
+        self.assertEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertTrue((self.ledgers / "checkpoint-thread.sqlite3").is_file())
+
     def test_hook_prefers_stable_thread_id_across_session_changes(self) -> None:
         first = self.run_hook(
             self.mutation_payload("session-a", "hook-call-a", thread_id="stable-thread")
@@ -410,16 +429,16 @@ class V2ControlPlaneTests(unittest.TestCase):
         ledger = load_ledger_state(self.ledgers, "stable-thread")
         self.assertEqual("stable-thread", ledger["ledger_id"])
 
-    def test_hook_denies_a_mutation_when_configuration_is_missing(self) -> None:
+    def test_hook_fails_open_with_a_warning_when_configuration_is_missing(self) -> None:
         result = self.run_hook(
             self.mutation_payload("unconfigured-thread", "unconfigured-call"),
             configured=False,
         )
 
-        payload = json.loads(result.stdout)
-        reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
-        self.assertIn("ledger_root_not_configured", reason)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
+        self.assertIn("ledger_root_not_configured", result.stderr)
+        self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
 
     def test_hook_allows_a_second_thread_on_the_same_branch(self) -> None:
         first = self.run_hook(self.mutation_payload("hook-a", "hook-call-a"))
@@ -512,13 +531,13 @@ class V2ControlPlaneTests(unittest.TestCase):
         self.assertEqual(0, operation_rows)
         self.assertEqual(0, open_spans)
 
-    def test_hook_blocks_direct_git_delivery_commands(self) -> None:
+    def test_hook_ignores_builds_and_direct_git_delivery_commands(self) -> None:
         result = self.run_hook(
             {
                 "hook_event_name": "PreToolUse",
                 "tool_name": "exec_command",
                 "tool_input": {
-                    "cmd": "git status --short && git push origin main",
+                    "cmd": "npm test && git push origin main",
                     "workdir": str(self.repo),
                 },
                 "session_id": "raw-git-thread",
@@ -527,11 +546,42 @@ class V2ControlPlaneTests(unittest.TestCase):
             }
         )
 
-        payload = json.loads(result.stdout)
-        reason = payload["hookSpecificOutput"]["permissionDecisionReason"]
-        self.assertEqual("deny", payload["hookSpecificOutput"]["permissionDecision"])
-        self.assertIn("direct git push", reason)
+        self.assertEqual(0, result.returncode)
+        self.assertEqual("", result.stdout)
         self.assertFalse((self.ledgers / "checkpoint-thread.sqlite3").exists())
+
+    def test_new_guard_prunes_stale_hook_spans(self) -> None:
+        old = self.mutation_payload("hook-a", "old-call")
+        self.run_hook(old)
+        database = self.ledgers / "checkpoint-thread.sqlite3"
+        with sqlite3.connect(database) as connection:
+            connection.execute(
+                "UPDATE hook_spans SET started_at = '2000-01-01T00:00:00+00:00'"
+            )
+            connection.commit()
+
+        self.run_hook(self.mutation_payload("hook-a", "new-call"))
+
+        with sqlite3.connect(database) as connection:
+            spans = connection.execute(
+                "SELECT span_id FROM hook_spans ORDER BY span_id"
+            ).fetchall()
+        self.assertEqual([("new-call",)], spans)
+
+    def test_failed_post_hook_keeps_the_span_and_reports_a_warning(self) -> None:
+        mutation = self.mutation_payload("hook-a", "hook-call")
+        self.run_hook(mutation)
+        git(self.repo, "switch", "-q", "-c", "other")
+
+        post = self.run_hook({**mutation, "hook_event_name": "PostToolUse"})
+
+        self.assertEqual(0, post.returncode)
+        self.assertIn("hook_span_context_changed", post.stderr)
+        with sqlite3.connect(self.ledgers / "checkpoint-thread.sqlite3") as connection:
+            spans = connection.execute(
+                "SELECT span_id FROM hook_spans WHERE ledger_id = 'hook-a'"
+            ).fetchall()
+        self.assertEqual([("hook-call",)], spans)
 
     def test_successful_ship_prunes_private_recovery_refs(self) -> None:
         remote = self.root / "remote.git"
@@ -590,7 +640,7 @@ class V2ControlPlaneTests(unittest.TestCase):
         )
 
         self.assertEqual("checkpoint-thread", plugin["name"])
-        self.assertEqual("2.1.0", plugin["version"])
+        self.assertEqual("2.2.0", plugin["version"])
         self.assertEqual("./skill/", plugin["skills"])
         self.assertEqual("checkpoint-thread", marketplace["name"])
         self.assertEqual(".", marketplace["plugins"][0]["source"]["path"])

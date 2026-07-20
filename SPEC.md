@@ -18,8 +18,8 @@ does not own or lock branches.
 - Turn is only conversation context, never a checkpoint unit.
 - Enter is lazy and idempotent before the first persistent repo mutation.
 - Goal transitions are semantic judgments by the model, not keyword parsing.
-- The synchronous Hook records Codex contributions; it is not a daemon or a
-  human file watcher.
+- The synchronous Hook observes recognized Codex writes; it is not a daemon,
+  human file watcher, or Git policy gate.
 
 An accepted goal becomes a local branch commit. Implicit progression into a
 distinct low-risk goal creates a provisional private ref. Ambiguous progression
@@ -32,7 +32,8 @@ stays within one concern until evidence supports a boundary.
   branch graph.
 - Successful `guard` and no-op `settle` calls create no durable audit event or
   operation row. A real edit creates one contribution event.
-- Hook spans are transient before-state records and are deleted by PostToolUse.
+- Hook spans are transient before-state records, deleted by successful
+  PostToolUse and pruned after 24 hours when a later guard starts.
 - Multiple ledgers may register the same repo and branch concurrently.
 - Contributions record goal id, before and after `state_oid`, changed paths, and
   conservative cross-thread path overlaps.
@@ -61,12 +62,12 @@ stays within one concern until evidence supports a boundary.
 
 - `PreToolUse` is silent for read-only tools, lazily enters the thread, and stores
   a transient before-state before recognized Codex mutations.
-- Missing configuration, Git operations in progress, and direct Git
-  history/delivery commands fail closed.
+- Attribution failures fail open with a warning so the observer cannot prevent
+  normal work. Ordinary build/test and delivery commands are ignored.
 - `PostToolUse` records a contribution only when the resulting state differs.
 - Same-branch threads are allowed. Same-path changes are marked as overlaps and
   reconciled during commit selection rather than blocked during editing.
-- Hook enforcement covers Codex tool calls. Human edits and processes outside
+- Hook observation covers recognized Codex write calls. Human edits and processes outside
   Codex remain unattributed until explicitly assigned.
 
 ## Verification invariants

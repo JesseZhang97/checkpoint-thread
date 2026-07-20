@@ -2,10 +2,10 @@
 
 ## Meaning of "most scenarios"
 
-Coverage is measured against the checked-in 104-scenario catalog, not raw Python
-line coverage. The original 80 scenarios remain intact. Twenty-four V2.1
+Coverage is measured against the checked-in 107-scenario catalog, not raw Python
+line coverage. The original 80 scenarios remain intact. Twenty-seven V2.2
 scenarios add the provenance ledger, verification integrity, shared-branch
-concurrency, and Hook enforcement without weakening the previous gates.
+concurrency, and fail-open Hook observation without weakening safety gates.
 
 Scenario weights are:
 
@@ -33,7 +33,7 @@ contract clause is not coverage.
 The model-loaded `SKILL.md` must remain at or below 100 lines and 650 words, with
 at most four conditionally loaded references. A read-only thread creates no
 state, and a same-goal continuation dispatches no semantic checkpoint command;
-the synchronous mutation guard is runtime enforcement, not model context.
+the synchronous mutation observer is runtime instrumentation, not model context.
 
 On the acceptance machine, the disposable-repo benchmark requires:
 
@@ -58,8 +58,8 @@ Persistence acceptance additionally requires:
 The catalog covers SQLite-only attribution state, operation replay, database integrity,
 exact verification identity, contribution spans and shared-branch overlap,
 unborn and ordinary worktrees, root commits, staging, untracked and ignored
-files, multiple branches/worktrees/repos, local and GitHub remotes, Hook allow
-and deny paths, concurrent remote changes, atomic rejection, rebase, conflict,
+files, multiple branches/worktrees/repos, local and GitHub remotes, Hook
+observation and warning paths, concurrent remote changes, atomic rejection, rebase, conflict,
 and push rejection.
 
 Git LFS object transport, server administration, authentication recovery,
